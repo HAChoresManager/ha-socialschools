@@ -1,0 +1,89 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Social Schools",
+        "description": "Sign in with the Social Schools account of a parent. The password is only used to obtain a token and is not stored.",
+        "data": {
+          "username": "Email address",
+          "password": "Password"
+        },
+        "data_description": {
+          "username": "The email address you use to sign in to Social Schools.",
+          "password": "The password of your Social Schools account."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to Social Schools again",
+        "description": "The Social Schools login of {username} is no longer valid. Enter the password to sign in again.",
+        "data": {
+          "password": "Password"
+        },
+        "data_description": {
+          "password": "The current password of your Social Schools account."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid authentication",
+      "cannot_connect": "Failed to connect",
+      "unsupported": "The Social Schools login page is not supported by this version of the integration",
+      "no_parent_role": "This account has no parent role at any school",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Account is already configured",
+      "unique_id_mismatch": "The credentials belong to a different account than the one being re-authenticated",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Social Schools options",
+        "data": {
+          "posts_interval": "Update interval",
+          "calendar_days": "Calendar horizon",
+          "posts_in_list": "Posts in the list attribute"
+        },
+        "data_description": {
+          "posts_interval": "How often Home Assistant checks Social Schools for new posts, in minutes.",
+          "calendar_days": "Number of days ahead for which calendar events are fetched.",
+          "posts_in_list": "Number of posts kept in the list attribute of the posts sensor."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "latest_post": {
+        "name": "Latest post"
+      },
+      "post_count": {
+        "name": "Posts"
+      }
+    },
+    "event": {
+      "new_post": {
+        "name": "New post",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "nieuw_bericht": "New post"
+            }
+          }
+        }
+      }
+    },
+    "calendar": {
+      "calendar": {
+        "name": "Calendar"
+      }
+    }
+  },
+  "exceptions": {
+    "no_parent_role": {
+      "message": "The Social Schools account has no parent role at any school"
+    }
+  }
+}

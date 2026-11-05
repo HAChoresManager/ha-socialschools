@@ -1,0 +1,61 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # The brands check needs custom_components/socialschools/brand/icon.png or a
+          # listing of the domain in home-assistant/brands; the Social Schools logo is
+          # theirs to give, so the check is skipped until the domain is listed there.
+          ignore: brands
+
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Python 3.12 first: the pure modules and scripts/probe.py must also run there, and
+      # the tests that check this skip when no python3.12 is on the PATH.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: python3.12 --version
+      - run: >-
+          python3.12 -m py_compile
+          custom_components/socialschools/const.py
+          custom_components/socialschools/errors.py
+          custom_components/socialschools/login.py
+          custom_components/socialschools/tokens.py
+          custom_components/socialschools/client.py
+          custom_components/socialschools/models.py
+          custom_components/socialschools/textutil.py
+          scripts/probe.py
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements_test.txt
+      - run: ruff check .
+      - run: pytest -q

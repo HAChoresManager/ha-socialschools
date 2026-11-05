@@ -1,0 +1,89 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Verbinden met Social Schools",
+        "description": "Meld je aan met het Social Schools-account van een ouder. Het wachtwoord wordt alleen gebruikt om een toegangssleutel op te halen en wordt niet opgeslagen.",
+        "data": {
+          "username": "E-mailadres",
+          "password": "Wachtwoord"
+        },
+        "data_description": {
+          "username": "Het e-mailadres waarmee je bij Social Schools inlogt.",
+          "password": "Het wachtwoord van je Social Schools-account."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Opnieuw aanmelden bij Social Schools",
+        "description": "De Social Schools-aanmelding van {username} is niet meer geldig. Voer het wachtwoord in om opnieuw aan te melden.",
+        "data": {
+          "password": "Wachtwoord"
+        },
+        "data_description": {
+          "password": "Het huidige wachtwoord van je Social Schools-account."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Ongeldige aanmelding",
+      "cannot_connect": "Verbinden mislukt",
+      "unsupported": "De aanmeldpagina van Social Schools wordt niet ondersteund door deze versie van de integratie",
+      "no_parent_role": "Dit account heeft op geen enkele school een ouderrol",
+      "unknown": "Onverwachte fout"
+    },
+    "abort": {
+      "already_configured": "Account is al geconfigureerd",
+      "unique_id_mismatch": "De gegevens horen bij een ander account dan het account dat opnieuw wordt aangemeld",
+      "reauth_successful": "Opnieuw aanmelden is gelukt"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Social Schools-opties",
+        "data": {
+          "posts_interval": "Bijwerkinterval",
+          "calendar_days": "Agendahorizon",
+          "posts_in_list": "Berichten in het lijstattribuut"
+        },
+        "data_description": {
+          "posts_interval": "Hoe vaak Home Assistant Social Schools controleert op nieuwe berichten, in minuten.",
+          "calendar_days": "Aantal dagen vooruit waarvoor agenda-items worden opgehaald.",
+          "posts_in_list": "Aantal berichten in het lijstattribuut van de berichtensensor."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "latest_post": {
+        "name": "Laatste bericht"
+      },
+      "post_count": {
+        "name": "Berichten"
+      }
+    },
+    "event": {
+      "new_post": {
+        "name": "Nieuw bericht",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "nieuw_bericht": "Nieuw bericht"
+            }
+          }
+        }
+      }
+    },
+    "calendar": {
+      "calendar": {
+        "name": "Agenda"
+      }
+    }
+  },
+  "exceptions": {
+    "no_parent_role": {
+      "message": "Het Social Schools-account heeft op geen enkele school een ouderrol"
+    }
+  }
+}
