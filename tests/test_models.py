@@ -413,6 +413,7 @@ def test_parse_post_full() -> None:
         author="Juf Voorbeeld",
         comments_count=3,
         attachments=("foto.jpg", "brief .pdf", "foto.jpg"),
+        community_ids=(1, 2, 3, 4, 5),
     )
     assert post.created.tzinfo is UTC
     assert "private-" not in repr(post)

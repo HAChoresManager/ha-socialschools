@@ -73,10 +73,16 @@ async def test_diagnostics(
             "last_success_utc": FROZEN_ISO,
             "consecutive_failures": 0,
             "update_interval_seconds": 900,
+            "reader_count": 0,
+            "child_count": 0,
+            "posts_with_read_marks": 0,
+            "open_post_cache_size": 0,
+            "schools_with_opened_post": 0,
             "schools": [
                 {
                     "school_id": 7,
                     "post_count": 3,
+                    "unread_post_count": 0,
                     "event_count": 2,
                     "events_fetched_at": FROZEN_ISO,
                     "newest_post_created": "2026-11-03T08:00:00+00:00",
@@ -124,6 +130,7 @@ async def test_diagnostics_with_two_schools_and_no_posts(
         {
             "school_id": school_id,
             "post_count": 0,
+            "unread_post_count": 0,
             "event_count": 0,
             "events_fetched_at": FROZEN_ISO,
             "newest_post_created": None,
@@ -132,3 +139,25 @@ async def test_diagnostics_with_two_schools_and_no_posts(
     ]
     _assert_plain_and_anonymous(diagnostics)
     assert "Second" not in json.dumps(diagnostics)
+
+
+@pytest.mark.parametrize(
+    "entry_options",
+    [{"lezers": ["person.ouder_een", "person.ouder_twee"], "kinderen": "Kind Een=6A"}],
+)
+async def test_diagnostics_show_reader_and_child_counts_only(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """Readers and children are redacted; only their counts and the read-mark counts show."""
+    diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
+    assert diagnostics["entry"]["options"] == {"lezers": "**REDACTED**", "kinderen": "**REDACTED**"}
+    coordinator = diagnostics["coordinator"]
+    assert coordinator["reader_count"] == 2
+    assert coordinator["child_count"] == 1
+    assert coordinator["posts_with_read_marks"] == 3
+    assert coordinator["schools"][0]["unread_post_count"] == 0
+    dump = json.dumps(diagnostics)
+    assert "ouder" not in dump
+    assert "Kind" not in dump
+    assert "6A" not in dump
+    _assert_plain_and_anonymous(diagnostics)

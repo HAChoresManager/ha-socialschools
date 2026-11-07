@@ -89,9 +89,12 @@ async def test_new_post_fires_one_event(
         "post_id": 104,
         "titel": "Bericht 104",
         "groep": "Groep 3",
+        "kinderen": [],
+        "schoolbreed": True,
         "auteur": "Private Teacher",
         "geplaatst": "2026-11-04T10:00:00+01:00",
         "tekst_kort": "Hallo wereld",
+        "url": "https://app.socialschools.eu/communityposts/104",
     }
 
 

@@ -44,14 +44,21 @@
         "data": {
           "posts_interval": "Bijwerkinterval",
           "calendar_days": "Agendahorizon",
-          "posts_in_list": "Berichten in het lijstattribuut"
+          "posts_in_list": "Berichten in het lijstattribuut",
+          "lezers": "Lezers",
+          "kinderen": "Kinderen en groepen"
         },
         "data_description": {
           "posts_interval": "Hoe vaak Home Assistant Social Schools controleert op nieuwe berichten, in minuten.",
           "calendar_days": "Aantal dagen vooruit waarvoor agenda-items worden opgehaald.",
-          "posts_in_list": "Aantal berichten in het lijstattribuut van de berichtensensor."
+          "posts_in_list": "Aantal berichten in het lijstattribuut van de berichtensensor.",
+          "lezers": "Personen die een bericht gelezen moeten hebben voordat het niet meer nieuw is. Gelezen-markeringen blijven in Home Assistant en gaan nooit naar Social Schools.",
+          "kinderen": "Eén regel per kind, bijvoorbeeld Noud=6A. Scheid meerdere groepen met een komma. Groepsnamen moeten precies overeenkomen; hoofdletters tellen niet."
         }
       }
+    },
+    "error": {
+      "invalid_children": "Elke regel moet de vorm Naam=groep, groep hebben"
     }
   },
   "entity": {
@@ -61,6 +68,12 @@
       },
       "post_count": {
         "name": "Berichten"
+      },
+      "unread": {
+        "name": "Ongelezen"
+      },
+      "open_post": {
+        "name": "Geopend bericht"
       }
     },
     "event": {
@@ -84,6 +97,61 @@
   "exceptions": {
     "no_parent_role": {
       "message": "Het Social Schools-account heeft op geen enkele school een ouderrol"
+    },
+    "choose_person": {
+      "message": "Kies wie het bericht gelezen heeft"
+    },
+    "not_a_reader": {
+      "message": "{person} is geen lezer van deze integratie"
+    },
+    "unknown_post": {
+      "message": "Bericht {post_id} staat niet in de huidige feed"
+    },
+    "open_failed": {
+      "message": "Bericht {post_id} kon niet worden geopend; het vorige bericht blijft staan"
+    },
+    "not_loaded": {
+      "message": "Social Schools is niet geladen"
+    }
+  },
+  "services": {
+    "markeer_gelezen": {
+      "name": "Markeer als gelezen",
+      "description": "Markeert een bericht als gelezen (of ongelezen) door een persoon. Dit blijft in Home Assistant; er gaat niets naar Social Schools.",
+      "fields": {
+        "post_id": {
+          "name": "Bericht-id",
+          "description": "Het id van een bericht in de huidige feed."
+        },
+        "persoon": {
+          "name": "Persoon",
+          "description": "Wie het bericht gelezen heeft. Leeg laten om de persoon van de gebruiker te nemen die de actie aanroept."
+        },
+        "gelezen": {
+          "name": "Gelezen",
+          "description": "Zet uit om de markering weer weg te halen."
+        }
+      }
+    },
+    "markeer_alles_gelezen": {
+      "name": "Markeer alles als gelezen",
+      "description": "Markeert alle berichten in de feed als gelezen door een persoon. Dit blijft in Home Assistant.",
+      "fields": {
+        "persoon": {
+          "name": "Persoon",
+          "description": "Wie de berichten gelezen heeft. Leeg laten om de persoon van de gebruiker te nemen die de actie aanroept."
+        }
+      }
+    },
+    "open_bericht": {
+      "name": "Open bericht",
+      "description": "Toont de volledige tekst van een bericht uit de feed in de sensor Geopend bericht. Openen markeert niets als gelezen.",
+      "fields": {
+        "post_id": {
+          "name": "Bericht-id",
+          "description": "Het id van een bericht in de huidige feed."
+        }
+      }
     }
   }
 }

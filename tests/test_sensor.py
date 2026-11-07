@@ -45,7 +45,20 @@ FROZEN_NOW = datetime(2026, 11, 4, 10, tzinfo=UTC)
 POLL = timedelta(minutes=15)
 LATEST_POST_ID = "sensor.social_schools_private_school_laatste_bericht"
 POST_COUNT_ID = "sensor.social_schools_private_school_berichten"
-SUMMARY_KEYS = {"post_id", "titel", "groep", "auteur", "geplaatst", "tekst_kort"}
+SUMMARY_KEYS = {
+    "post_id",
+    "titel",
+    "groep",
+    "kinderen",
+    "schoolbreed",
+    "auteur",
+    "geplaatst",
+    "tekst_kort",
+    "url",
+    "gelezen_door",
+    "nog_lezen",
+    "nieuw",
+}
 
 pytestmark = pytest.mark.freeze_time(FROZEN_NOW)
 
@@ -233,25 +246,43 @@ async def test_post_count(hass: HomeAssistant, init_integration: MockConfigEntry
                 "post_id": 103,
                 "titel": "Bericht 103",
                 "groep": "Groep 3",
+                "kinderen": [],
+                "schoolbreed": True,
                 "auteur": "Private Teacher",
                 "geplaatst": "2026-11-03T09:00:00+01:00",
                 "tekst_kort": "Hallo wereld",
+                "url": "https://app.socialschools.eu/communityposts/103",
+                "gelezen_door": [],
+                "nog_lezen": [],
+                "nieuw": False,
             },
             {
                 "post_id": 102,
                 "titel": "Bericht 102",
                 "groep": "Groep 3",
+                "kinderen": [],
+                "schoolbreed": True,
                 "auteur": "Private Teacher",
                 "geplaatst": "2026-11-01T09:00:00+01:00",
                 "tekst_kort": "Hallo wereld",
+                "url": "https://app.socialschools.eu/communityposts/102",
+                "gelezen_door": [],
+                "nog_lezen": [],
+                "nieuw": False,
             },
             {
                 "post_id": 101,
                 "titel": "Bericht 101",
                 "groep": "Groep 3",
+                "kinderen": [],
+                "schoolbreed": True,
                 "auteur": "Private Teacher",
                 "geplaatst": "2026-10-20T10:00:00+02:00",
                 "tekst_kort": "Hallo wereld",
+                "url": "https://app.socialschools.eu/communityposts/101",
+                "gelezen_door": [],
+                "nog_lezen": [],
+                "nieuw": False,
             },
         ],
         "friendly_name": "Social Schools · Private School Berichten",
