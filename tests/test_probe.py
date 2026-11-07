@@ -189,7 +189,7 @@ def test_credentials_come_only_from_prompts() -> None:
         for arg in node.args
         if isinstance(arg, ast.Constant)
     ]
-    assert options == ["--check"]
+    assert options == ["--check", "--agenda-vorm", "--kinderen-vorm"]
     assert 'input("E-mailadres: ")' in source
     assert 'getpass.getpass("Wachtwoord: ")' in source
     assert "del password" in source
