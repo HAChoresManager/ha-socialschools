@@ -1,0 +1,34 @@
+markeer_gelezen:
+  fields:
+    post_id:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 9223372036854775807
+          mode: box
+    persoon:
+      selector:
+        entity:
+          domain: person
+    gelezen:
+      default: true
+      selector:
+        boolean:
+
+markeer_alles_gelezen:
+  fields:
+    persoon:
+      selector:
+        entity:
+          domain: person
+
+open_bericht:
+  fields:
+    post_id:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 9223372036854775807
+          mode: box

@@ -9,12 +9,14 @@ by inspecting the source.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 import pytest
 
@@ -200,3 +202,73 @@ def test_credentials_come_only_from_prompts() -> None:
         and (node.attr if isinstance(node, ast.Attribute) else node.id) in {"environ", "getenv"}
     ]
     assert not environment_access
+
+
+def _probe_module() -> Any:
+    """Import scripts/probe.py as a module (its helpers need no network)."""
+    spec = importlib.util.spec_from_file_location("probe_under_test", PROBE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_agenda_shape_prints_only_all_day_and_raw_times(capsys: pytest.CaptureFixture[str]) -> None:
+    """``--agenda-vorm`` shows allDay, raw start/end and their zone; never titles or text."""
+    probe = _probe_module()
+    probe.describe_agenda(
+        [
+            {
+                "title": "private-titel",
+                "description": "private-tekst",
+                "location": "private-plek",
+                "allDay": True,
+                "start": "2026-11-26T00:00:00Z",
+                "end": "2026-11-27T00:00:00Z",
+            },
+            {"allDay": False, "start": "2026-11-30T19:00:00", "end": "2026-11-30T20:30:00+01:00"},
+            {"allDay": "ja", "start": "private-geen-datum", "end": None},
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "private-" not in out
+    assert "start=2026-11-26T00:00:00Z (tijdzone: Z)" in out
+    assert "start=2026-11-30T19:00:00 (tijdzone: geen)" in out
+    assert "end=2026-11-30T20:30:00+01:00 (tijdzone: +01:00)" in out
+    assert "allDay=<str>  start=<str> (tijdzone: onbekend)" in out
+
+
+def test_children_shape_prints_field_names_and_overlap_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--kinderen-vorm`` shows field names and yes/no answers; never names or ids."""
+    probe = _probe_module()
+    account = {
+        "displayName": "private-ouder",
+        "roles": [
+            {
+                "id": 11,
+                "type": 1,
+                "school": {"id": 7, "name": "private-school"},
+                "connections": [
+                    {
+                        "id": 5,
+                        "displayName": "private-kind",
+                        "communities": [{"id": 900, "name": "private-6A"}],
+                    }
+                ],
+            },
+            {"id": 12, "type": 2, "school": {"id": 8}},
+        ],
+    }
+    posts = [{"communities": [{"id": 900, "groupId": 3, "name": "private-6A"}]}]
+    probe.describe_children(account, posts, 1)
+    out = capsys.readouterr().out
+    assert "private-" not in out
+    assert "900" not in out
+    assert (
+        "Velden van roles[0].connections[0]: communities (list), displayName (str), id (int)" in out
+    )
+    assert "Community-id's in connections: ja" in out
+    assert "Overlap met communities[].id van berichten: ja" in out
+    assert "Overlap met communities[].groupId van berichten: nee" in out

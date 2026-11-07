@@ -27,6 +27,8 @@ from homeassistant.helpers.aiohttp_client import (
     async_get_clientsession,
 )
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -36,6 +38,7 @@ from homeassistant.helpers.selector import (
 )
 import voluptuous as vol
 
+from .children import parse_children
 from .client import SocialSchoolsClient
 from .const import (
     CONF_CLIENT_ID,
@@ -55,8 +58,10 @@ from .const import (
     MIN_POSTS_INTERVAL,
     OIDC_CLIENT_ID,
     OPT_CALENDAR_DAYS,
+    OPT_CHILDREN,
     OPT_POSTS_IN_LIST,
     OPT_POSTS_INTERVAL,
+    OPT_READERS,
 )
 from .errors import ApiError, CannotConnect, InvalidAuth, UnsupportedLogin
 from .login import async_native_login
@@ -107,6 +112,10 @@ OPTIONS_SCHEMA = vol.Schema(
                 min=MIN_POSTS_IN_LIST, max=MAX_POSTS_IN_LIST, step=1, mode=NumberSelectorMode.BOX
             )
         ),
+        vol.Optional(OPT_READERS): EntitySelector(
+            EntitySelectorConfig(domain="person", multiple=True)
+        ),
+        vol.Optional(OPT_CHILDREN): TextSelector(TextSelectorConfig(multiline=True)),
     }
 )
 OPTION_DEFAULTS: dict[str, int] = {
@@ -243,16 +252,31 @@ class SocialSchoolsOptionsFlow(OptionsFlowWithReload):
     """Polling and display options; saving them reloads the entry."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Show the options with their current values and store the new ones as integers."""
+        """Show the options with their current values and store the new ones.
+
+        Numbers are stored as integers, ``lezers`` as a list of person entity ids
+        and ``kinderen`` as the text, after checking that every line reads
+        ``Naam=groep, groep``.
+        """
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(
-                data={key: int(user_input[key]) for key in OPTION_DEFAULTS}
-            )
-        options = self.config_entry.options
+            children = str(user_input.get(OPT_CHILDREN, "")).strip()
+            try:
+                parse_children(children)
+            except ValueError:
+                errors[OPT_CHILDREN] = "invalid_children"
+            else:
+                readers = user_input.get(OPT_READERS) or []
+                return self.async_create_entry(
+                    data={key: int(user_input[key]) for key in OPTION_DEFAULTS}
+                    | {OPT_READERS: list(dict.fromkeys(readers)), OPT_CHILDREN: children}
+                )
+        current = dict(self.config_entry.options) if user_input is None else user_input
+        suggested = {key: current.get(key, default) for key, default in OPTION_DEFAULTS.items()}
+        suggested[OPT_READERS] = current.get(OPT_READERS, [])
+        suggested[OPT_CHILDREN] = current.get(OPT_CHILDREN, "")
         return self.async_show_form(
             step_id="init",
-            data_schema=self.add_suggested_values_to_schema(
-                OPTIONS_SCHEMA,
-                {key: options.get(key, default) for key, default in OPTION_DEFAULTS.items()},
-            ),
+            data_schema=self.add_suggested_values_to_schema(OPTIONS_SCHEMA, suggested),
+            errors=errors,
         )

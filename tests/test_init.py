@@ -23,7 +23,12 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.socialschools.const import CONF_REFRESH_TOKEN, CONF_USERNAME, DOMAIN
+from custom_components.socialschools.const import (
+    CONF_REFRESH_TOKEN,
+    CONF_USERNAME,
+    DOMAIN,
+    VERSION,
+)
 from tests.conftest import (
     ACCOUNT_PATH,
     POSTS_PATH,
@@ -39,12 +44,16 @@ FROZEN_NOW = datetime(2026, 11, 4, 10, tzinfo=UTC)
 DUTCH_ENTITY_IDS = {
     "sensor.social_schools_private_school_laatste_bericht": "4242_7_latest_post",
     "sensor.social_schools_private_school_berichten": "4242_7_post_count",
+    "sensor.social_schools_private_school_ongelezen": "4242_7_unread",
+    "sensor.social_schools_private_school_geopend_bericht": "4242_7_open_post",
     "event.social_schools_private_school_nieuw_bericht": "4242_7_new_post",
     "calendar.social_schools_private_school_agenda": "4242_7_calendar",
 }
 ENGLISH_ENTITY_IDS = (
     "sensor.social_schools_private_school_latest_post",
     "sensor.social_schools_private_school_posts",
+    "sensor.social_schools_private_school_unread",
+    "sensor.social_schools_private_school_opened_post",
     "event.social_schools_private_school_new_post",
     "calendar.social_schools_private_school_calendar",
 )
@@ -99,7 +108,7 @@ async def test_setup_creates_device_and_entities(
         state = hass.states.get(entity_id)
         assert state is not None, entity_id
         assert state.state != "unavailable"
-    assert len(er.async_entries_for_config_entry(entity_registry, init_integration.entry_id)) == 4
+    assert len(er.async_entries_for_config_entry(entity_registry, init_integration.entry_id)) == 6
 
 
 async def test_english_entity_ids(
@@ -139,7 +148,7 @@ async def test_two_schools(
         is None
     )
     entities = er.async_entries_for_config_entry(entity_registry, mock_config_entry.entry_id)
-    assert len(entities) == 8
+    assert len(entities) == 12
     assert entity_registry.async_get("sensor.social_schools_second_school_berichten") is not None
     assert {headers["Schoolid"] for _, _, headers in api_state.requests_for(POSTS_PATH)} == {
         "7",
@@ -155,14 +164,14 @@ async def test_requests_carry_auth_and_school_headers(
     assert len(api_state.requests_for(TOKEN_PATH)) == 1
     ((_, _, account_headers),) = api_state.requests_for(ACCOUNT_PATH)
     assert account_headers["Authorization"] == "Bearer private-access-1"
-    assert account_headers["User-Agent"] == "HomeAssistant-SocialSchools/0.1.0"
+    assert account_headers["User-Agent"] == f"HomeAssistant-SocialSchools/{VERSION}"
     assert "Schoolid" not in account_headers
     assert "Roletypeid" not in account_headers
     ((_, _, posts_headers),) = api_state.requests_for(POSTS_PATH)
     assert posts_headers["Authorization"] == "Bearer private-access-1"
     assert posts_headers["Schoolid"] == "7"
     assert posts_headers["Roletypeid"] == "1"
-    assert posts_headers["User-Agent"] == "HomeAssistant-SocialSchools/0.1.0"
+    assert posts_headers["User-Agent"] == f"HomeAssistant-SocialSchools/{VERSION}"
 
 
 async def test_account_unreachable_retries_setup(

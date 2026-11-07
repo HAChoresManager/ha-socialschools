@@ -57,6 +57,8 @@ jobs:
           custom_components/socialschools/client.py
           custom_components/socialschools/models.py
           custom_components/socialschools/textutil.py
+          custom_components/socialschools/reading.py
+          custom_components/socialschools/children.py
           scripts/probe.py
       # The probe must also RUN on a bare Python 3.12 with only aiohttp (the documented
       # docker command): --check loads the protocol modules without Home Assistant.

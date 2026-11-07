@@ -68,6 +68,7 @@ class Post:
     author: str  # author.displayName or ""
     comments_count: int
     attachments: tuple[str, ...]  # media[].fileName only
+    community_ids: tuple[int, ...] = ()  # communities[].id, in order
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,17 @@ def _names(value: Any, key: str, *, unique: bool) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _community_ids(value: Any) -> tuple[int, ...]:
+    """Collect the integer ``id`` of every community object, in order, de-duplicated."""
+    ids: list[int] = []
+    if isinstance(value, list):
+        for item in value:
+            community_id = _as_int(item.get("id")) if isinstance(item, Mapping) else None
+            if community_id is not None and community_id not in ids:
+                ids.append(community_id)
+    return tuple(ids)
+
+
 def parse_account(data: Any) -> Account:
     """Build an Account from ``useraccounts/current``; raises ApiError on an unusable profile.
 
@@ -201,6 +213,7 @@ def parse_post(data: Mapping[str, Any]) -> Post:
         author=_as_text(author.get("displayName")) if isinstance(author, Mapping) else "",
         comments_count=_as_int(data.get("commentsCount")) or 0,
         attachments=_names(data.get("media"), "fileName", unique=False),
+        community_ids=_community_ids(data.get("communities")),
     )
 
 

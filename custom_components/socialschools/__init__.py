@@ -9,28 +9,38 @@ from homeassistant.config_entries import ConfigEntry, UnknownEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.typing import ConfigType
 
 from .client import SocialSchoolsClient
 from .const import CONF_CLIENT_ID, CONF_REFRESH_TOKEN, DOMAIN, STORAGE_KEY_TEMPLATE, STORAGE_VERSION
-from .coordinator import SocialSchoolsCoordinator
+from .coordinator import SocialSchoolsCoordinator, SocialSchoolsStore
 from .errors import ApiError, CannotConnect, InvalidAuth
 from .models import parse_account
+from .services import async_setup_services
 from .tokens import TokenManager
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.CALENDAR, Platform.EVENT, Platform.SENSOR]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 type SocialSchoolsConfigEntry = ConfigEntry[SocialSchoolsCoordinator]
 
 
 def _create_store(hass: HomeAssistant, entry: SocialSchoolsConfigEntry) -> Store[dict[str, Any]]:
-    """Return the private store that keeps the new-post bookkeeping of ``entry``."""
-    return Store[dict[str, Any]](
+    """Return the private store with the new-post bookkeeping and read marks of ``entry``."""
+    return SocialSchoolsStore(
         hass, STORAGE_VERSION, STORAGE_KEY_TEMPLATE.format(entry_id=entry.entry_id), private=True
     )
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration's actions (read marks and the opened post)."""
+    async_setup_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SocialSchoolsConfigEntry) -> bool:
