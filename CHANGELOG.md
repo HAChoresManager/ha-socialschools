@@ -7,6 +7,10 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
 
 ## [Unreleased]
 
+### Toegevoegd
+
+- MIT-licentie (`LICENSE`).
+
 ### Gewijzigd
 
 - JSON-antwoorden worden gedecodeerd met één gedeelde helper (`payload.py`) die de grootte

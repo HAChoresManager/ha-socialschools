@@ -364,3 +364,7 @@ ruff check .
   pull request en wekelijks.
 - `docs/DESIGN.md` is het ontwerpcontract (namen, gedrag, grenzen); gedragswijzigingen horen
   daar ook in.
+
+## Licentie
+
+MIT, zie [`LICENSE`](LICENSE).
