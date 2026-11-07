@@ -55,6 +55,10 @@ jobs:
           custom_components/socialschools/models.py
           custom_components/socialschools/textutil.py
           scripts/probe.py
+      # The probe must also RUN on a bare Python 3.12 with only aiohttp (the documented
+      # docker command): --check loads the protocol modules without Home Assistant.
+      - run: python3.12 -m pip install --quiet aiohttp
+      - run: python3.12 scripts/probe.py --check
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements_test.txt
       - run: ruff check .
