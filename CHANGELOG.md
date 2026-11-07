@@ -7,8 +7,26 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-07
+
 ### Toegevoegd
 
+- Gelezen per persoon: optie *Lezers* (personen). Een bericht blijft nieuw tot alle lezers het
+  gelezen hebben. Dit is uitsluitend administratie in Home Assistant; er gaat niets naar Social
+  Schools. Bestaande berichten tellen bij de eerste run (en voor een later toegevoegde lezer) als
+  gelezen.
+- Acties `socialschools.markeer_gelezen` (met `gelezen: false` om een markering weg te halen),
+  `socialschools.markeer_alles_gelezen` en `socialschools.open_bericht`. Zonder `persoon` geldt
+  de persoon van de ingelogde gebruiker; een kiosk-gebruiker zonder persoon krijgt de melding
+  "Kies wie het bericht gelezen heeft".
+- Sensor *Ongelezen* (aantal, `eerste`, `per_persoon`) en sensor *Geopend bericht* (volledige
+  tekst tot 8000 tekens, binnen het attribuutbudget; standaard het nieuwste bericht).
+- De lijst `berichten` en het event `nieuw_bericht` krijgen `kinderen`, `schoolbreed` en `url`
+  (deeplink naar het bericht in de webapp); de lijst ook `gelezen_door`, `nog_lezen` en `nieuw`.
+- Optie *Kinderen en groepen* (`Kind=6A`, meerdere groepen met komma's) om berichten aan kinderen
+  te koppelen; exacte vergelijking per groepsnaam, zonder hoofdlettergevoeligheid.
+- `scripts/probe.py --agenda-vorm` en `--kinderen-vorm`: tonen de vorm van agenda-tijden en van
+  de kinderen in het account, zonder inhoud.
 - MIT-licentie (`LICENSE`).
 
 ### Gewijzigd
@@ -25,6 +43,9 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
   bericht moeten een JSON-object zijn, de agenda een lijst of object. Een ander antwoord geeft
   een fout ("unexpected JSON shape") in plaats van dat het wordt doorgegeven.
 - CI: de HACS-validatie wordt overgeslagen zolang de repository privé is.
+- De opslag (`.storage/socialschools.<entry_id>`) gaat naar versie 2 met de gelezen-markeringen;
+  een opslag van 0.1 wordt automatisch omgezet.
+- Diagnostische gegevens tonen van lezers en kinderen alleen het aantal.
 
 ### Opgelost
 

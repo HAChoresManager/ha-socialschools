@@ -43,7 +43,7 @@ PKCE-codewisseling) en gebruikt daarna dezelfde API als de app. Dat betekent:
 | Waar | Wat | Niet |
 |---|---|---|
 | `.storage/core.config_entries` | de titel van de configuratie (je weergavenaam bij Social Schools), e-mailadres, profiel-id, de client-id en het **refresh token** waarmee nieuwe toegangstokens worden gehaald | je **wachtwoord**: dat wordt alleen tijdens het instellen gebruikt en nooit bewaard of gelogd |
-| `.storage/socialschools.<entry_id>` | per school de ids van de al geziene berichten en één tijdstempel (voor de detectie van nieuwe berichten) | geen berichten, titels of namen |
+| `.storage/socialschools.<entry_id>` | per school de ids van de al geziene berichten en één tijdstempel (voor de detectie van nieuwe berichten), en per bericht-id de `person`-entiteiten die het gelezen hebben | geen berichten, titels of namen |
 | `.storage/core.restore_state` | zoals bij elke event-entiteit: het laatste event (met titel en korte tekst), zodat het een herstart overleeft | |
 | recorder-database | de toestanden en de meeste attributen van de entiteiten | de attributen `tekst`, `berichten`, `bijlagen` en `tekst_kort` (zie [Privacy](#privacy)) |
 
@@ -99,13 +99,15 @@ ouderrol is gevonden.
 | Bijwerkinterval (minuten) | 15 | 10 – 1440 | hoe vaak de berichtenfeed wordt opgehaald |
 | Agendahorizon (dagen) | 90 | 7 – 365 | hoe ver vooruit de agenda wordt opgehaald |
 | Berichten in het lijstattribuut | 10 | 1 – 20 | lengte van het attribuut `berichten` |
+| Lezers | geen | personen | wie een bericht gelezen moet hebben voordat het niet meer "nieuw" is (zie [Gelezen per persoon](#gelezen-per-persoon)) |
+| Kinderen en groepen | leeg | tekst | één regel per kind, bijvoorbeeld `Kind=6A` of `Kind=1/2A, 1/2B` (zie [Kinderen per bericht](#kinderen-per-bericht)) |
 
 Een wijziging wordt direct toegepast (de integratie herlaadt). De agenda wordt los van het
 berichteninterval elk uur ververst.
 
 ## Entiteiten
 
-Per school maakt de integratie één apparaat **Social Schools · \<schoolnaam\>** met vier
+Per school maakt de integratie één apparaat **Social Schools · \<schoolnaam\>** met zes
 entiteiten. Home Assistant leidt de entity-id's af uit de apparaatnaam en de vertaalde
 entiteitsnaam; voor een school "Voorbeeldschool":
 
@@ -113,6 +115,8 @@ entiteitsnaam; voor een school "Voorbeeldschool":
 |---|---|---|
 | Laatste bericht (sensor) | `sensor.social_schools_voorbeeldschool_laatste_bericht` | `sensor.social_schools_voorbeeldschool_latest_post` |
 | Berichten (sensor) | `sensor.social_schools_voorbeeldschool_berichten` | `sensor.social_schools_voorbeeldschool_posts` |
+| Ongelezen (sensor) | `sensor.social_schools_voorbeeldschool_ongelezen` | `sensor.social_schools_voorbeeldschool_unread` |
+| Geopend bericht (sensor) | `sensor.social_schools_voorbeeldschool_geopend_bericht` | `sensor.social_schools_voorbeeldschool_opened_post` |
 | Nieuw bericht (event) | `event.social_schools_voorbeeldschool_nieuw_bericht` | `event.social_schools_voorbeeldschool_new_post` |
 | Agenda (calendar) | `calendar.social_schools_voorbeeldschool_agenda` | `calendar.social_schools_voorbeeldschool_calendar` |
 
@@ -144,15 +148,27 @@ Toestand: het aantal berichten van de afgelopen zeven dagen (binnen de opgehaald
 20 berichten).
 
 Attribuut `berichten`: een lijst van de nieuwste berichten (aantal instelbaar, standaard 10),
-elk met `post_id`, `titel` (max. 120 tekens), `groep` (max. 120 tekens), `auteur` (max. 120
-tekens), `geplaatst` en `tekst_kort` (max. 300 tekens). Zouden alle attributen samen groter
-worden dan ongeveer 12 kB JSON, dan vallen de oudste berichten uit de lijst.
+elk met:
+
+| Veld | Inhoud |
+|---|---|
+| `post_id`, `titel`, `groep`, `auteur`, `geplaatst` | als bij het laatste bericht (titel en groep max. 120 tekens) |
+| `tekst_kort` | de eerste 300 tekens van de tekst |
+| `kinderen` | namen van de kinderen voor wie het bericht is (uit de optie *Kinderen en groepen*) |
+| `schoolbreed` | `true` voor een bericht voor (een groot deel van) de school |
+| `url` | deeplink naar het bericht in de webapp: `https://app.socialschools.eu/communityposts/<post_id>` |
+| `gelezen_door` | namen van de lezers die het bericht gelezen hebben |
+| `nog_lezen` | namen van de lezers die het nog niet gelezen hebben |
+| `nieuw` | `true` zolang niet alle lezers het gelezen hebben |
+
+Zouden alle attributen samen groter worden dan ongeveer 12 kB JSON, dan vallen de oudste
+berichten uit de lijst.
 
 ### `event.…_nieuw_bericht`
 
 Eventtype: `nieuw_bericht`. Gaat af voor elk bericht dat sinds de vorige ophaalronde nieuw in de
 feed is verschenen, in chronologische volgorde, met de attributen `post_id`, `titel`, `groep`,
-`auteur`, `geplaatst` en `tekst_kort`.
+`kinderen`, `schoolbreed`, `auteur`, `geplaatst`, `tekst_kort` en `url`.
 
 Een bericht is nieuw als zijn id nog niet eerder is gezien én het is geplaatst na het hoogste
 bekende tijdstip min zeven dagen. Bewerkte berichten houden hun id en zijn dus niet opnieuw
@@ -169,6 +185,107 @@ van de lopende of eerstvolgende activiteit. Hele-dag-activiteiten zijn echte hel
 activiteiten met een tijd staan in Nederlandse tijd (Europe/Amsterdam). De agenda beslaat zeven
 dagen terug tot de ingestelde horizon vooruit en wordt elk uur ververst. Ze is te gebruiken in de
 agendakaart van het dashboard en met de actie `calendar.get_events`.
+
+### `sensor.…_ongelezen`
+
+Toestand: het aantal berichten in de feed dat nog niet door alle lezers gelezen is (`0` zonder
+lezers).
+
+| Attribuut | Inhoud |
+|---|---|
+| `eerste` | het nieuwste ongelezen bericht als `{post_id, titel, groep, kinderen, schoolbreed, auteur, geplaatst, url, nog_lezen}`, of `null` |
+| `per_persoon` | per lezer het aantal berichten dat die nog niet gelezen heeft, bijvoorbeeld `{"Ouder Een": 2, "Ouder Twee": 0}` |
+
+### `sensor.…_geopend_bericht`
+
+Het bericht dat met de actie `socialschools.open_bericht` is geopend; zolang er niets geopend is,
+het nieuwste bericht. Toestand: de titel (max. 255 tekens).
+
+| Attribuut | Inhoud |
+|---|---|
+| `post_id`, `groep`, `kinderen`, `schoolbreed`, `auteur`, `geplaatst`, `reacties`, `url` | als hierboven |
+| `tekst` | de volledige tekst als platte tekst, maximaal 8000 tekens (korter als alle attributen samen anders groter worden dan ongeveer 12 kB) |
+| `afgekapt` | `true` als `tekst` is ingekort |
+| `bijlagen` | bestandsnamen van de bijlagen |
+| `gelezen_door`, `nog_lezen` | als in `berichten` |
+
+Openen haalt het bericht op met hetzelfde leesverzoek als de app (`GET communityposts/<id>`) en
+bewaart de laatste 20 geopende berichten in het geheugen, zodat opnieuw openen geen verzoek kost.
+Openen markeert niets als gelezen: laat je dashboard daarvoor `socialschools.markeer_gelezen`
+aanroepen. Mislukt het ophalen, dan blijft het vorige bericht staan en meldt de actie een fout.
+
+## Gelezen per persoon
+
+Met de optie **Lezers** kies je de personen die een bericht gelezen moeten hebben, bijvoorbeeld
+beide ouders. Een bericht blijft "nieuw" (`nieuw: true`, telt mee in *Ongelezen*) tot **alle**
+lezers het gelezen hebben.
+
+**Gelezen blijft in Home Assistant.** De integratie stuurt hierover niets naar Social Schools: geen
+leesbevestigingen, geen "gezien"-registratie, geen extra API-paden. Het is administratie in
+`.storage/socialschools.<entry_id>`: per bericht-id de `person`-entiteiten die het gelezen hebben.
+
+- Bij de eerste ophaalronde na het installeren of na de upgrade naar 0.2 tellen alle berichten
+  die al in de feed staan als gelezen door alle lezers; je begint dus niet met een stapel "nieuw".
+- Een bericht dat daarna binnenkomt, is ongelezen voor iedereen.
+- Een lezer die je later toevoegt, krijgt de berichten die op dat moment in de feed staan als
+  gelezen. Haal je een lezer weg, dan verdwijnen diens markeringen.
+
+### Acties
+
+| Actie | Velden | Wat het doet |
+|---|---|---|
+| `socialschools.markeer_gelezen` | `post_id` (verplicht), `persoon` (optioneel), `gelezen` (standaard `true`; `false` haalt de markering weg) | markeert één bericht als (on)gelezen door één persoon |
+| `socialschools.markeer_alles_gelezen` | `persoon` (optioneel) | markeert alle berichten in de feed als gelezen door één persoon |
+| `socialschools.open_bericht` | `post_id` (verplicht) | toont dat bericht volledig in *Geopend bericht* |
+
+Zonder `persoon` geldt de persoon die bij de ingelogde gebruiker hoort (het attribuut `user_id`
+van de `person`-entiteit). Op een gedeelde tablet met een kiosk-gebruiker zonder persoon moet je
+`persoon` meegeven; anders volgt de melding "Kies wie het bericht gelezen heeft". Een persoon die
+geen lezer is, of een `post_id` die niet in de huidige feed staat, geeft ook een nette fout. De
+entiteiten werken meteen bij, zonder verzoek aan Social Schools.
+
+Tablet (kiosk-gebruiker, je kiest wie je bent):
+
+```yaml
+action: socialschools.markeer_gelezen
+data:
+  post_id: 123456
+  persoon: person.ouder_een
+```
+
+Telefoon (de app weet wie je bent):
+
+```yaml
+action: socialschools.markeer_gelezen
+data:
+  post_id: 123456
+```
+
+Een verkeerde tik ongedaan maken:
+
+```yaml
+action: socialschools.markeer_gelezen
+data:
+  post_id: 123456
+  persoon: person.ouder_een
+  gelezen: false
+```
+
+## Kinderen per bericht
+
+Met de optie **Kinderen en groepen** koppel je berichten aan je kinderen. Eén regel per kind:
+de naam, `=`, en de groepen gescheiden door komma's, bijvoorbeeld:
+
+```text
+Kind Een=6A
+Kind Twee=1/2A, 1/2B
+```
+
+Een bericht hoort bij een kind als een van de groepen van het bericht precies gelijk is aan een
+groep van het kind (hoofdletters en extra spaties tellen niet), dus `Neo 4/5/6` telt niet als
+`6A`. `schoolbreed` is `true` als het bericht in meer dan drie groepen staat of in geen enkele
+groep van een kind (zoals `Schoolnieuws`). De groepen wisselen elk schooljaar: pas de optie dan
+aan.
 
 ## Automatiseringen
 
@@ -308,6 +425,12 @@ Wat de uitkomst betekent:
 
 ## Privacy
 
+- "Gelezen" is alleen administratie in Home Assistant en gaat nooit naar Social Schools. De
+  `url` in de attributen opent het bericht in de officiële webapp; wat die webapp dan registreert
+  (zoals bij gewoon gebruik van de app), valt buiten deze integratie.
+- De attributen `tekst` en `bijlagen` van *Geopend bericht* gaan, net als bij het laatste bericht,
+  niet in de recorder-database. Diagnostische gegevens tonen van lezers en kinderen alleen het
+  aantal.
 - De integratie logt zelf nooit wachtwoorden, tokens, cookies, antwoorden van de API, namen of
   berichtteksten, ook niet op debugniveau; in haar eigen logregels wordt de configuratie bij het
   entry-id genoemd. Foutmeldingen bevatten alleen de soort fout en de HTTP-status. Home Assistant
