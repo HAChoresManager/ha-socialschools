@@ -7,6 +7,17 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
 
 ## [Unreleased]
 
+### Gewijzigd
+
+- JSON-antwoorden worden gedecodeerd met één gedeelde helper (`payload.py`) die de grootte
+  begrenst en de nestdiepte (maximaal 64 niveaus) controleert met een lineaire scan vóór
+  `json.loads`. De uitkomst hangt daardoor niet meer af van de recursiegrens of de stackgrootte
+  van de Python-interpreter. Alleen UTF-8 wordt geaccepteerd.
+- De API-client controleert per endpoint de vorm van het antwoord: account, berichtenfeed en
+  bericht moeten een JSON-object zijn, de agenda een lijst of object. Een ander antwoord geeft
+  een fout ("unexpected JSON shape") in plaats van dat het wordt doorgegeven.
+- CI: de HACS-validatie wordt overgeslagen zolang de repository privé is.
+
 ## [0.1.0] - 2026-11-04
 
 ### Toegevoegd

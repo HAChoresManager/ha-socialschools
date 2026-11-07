@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
+import json
 import logging
 import re
 import socket
+from types import SimpleNamespace
 from typing import Any
 
 import aiohttp
@@ -22,12 +24,17 @@ from multidict import CIMultiDict
 import pytest
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.socialschools import client as client_module
-from custom_components.socialschools.client import ALLOWED_PATHS, SocialSchoolsClient
+from custom_components.socialschools import client as client_module, payload as payload_module
+from custom_components.socialschools.client import (
+    ALLOWED_PATHS,
+    RESPONSE_SHAPES,
+    SocialSchoolsClient,
+)
 from custom_components.socialschools.const import (
     FEED_FILTER_TYPE,
     FEED_LIMIT,
     MAX_API_BODY_BYTES,
+    MAX_JSON_DEPTH,
     ROLE_TYPE_PARENT,
     USER_AGENT,
     VERSION,
@@ -568,10 +575,10 @@ async def test_connection_error_is_cannot_connect(
 async def test_invalid_json_is_api_error(
     client: SocialSchoolsClient, api: FakeApi, status: int, raw: bytes, content_type: str
 ) -> None:
-    """A successful status without a JSON body is an ApiError carrying the status, not the body.
+    """A successful status without a usable JSON body is an ApiError with the status, not the body.
 
     The body must not survive on a chained JSONDecodeError (``.doc``), and JSON nested beyond
-    the recursion limit (RecursionError) is an ApiError like any other invalid body.
+    MAX_JSON_DEPTH is an ApiError like any other invalid body, on every interpreter.
     """
     api.reply(status=status, raw=raw, content_type=content_type)
     with pytest.raises(ApiError) as exc_info:
@@ -579,6 +586,139 @@ async def test_invalid_json_is_api_error(
     assert exc_info.value.status == status
     assert_sanitised(exc_info.value)
     assert_no_body_in_chain(exc_info.value)
+
+
+def test_every_whitelisted_path_has_a_response_shape() -> None:
+    """The shape table and the whitelist describe exactly the same endpoints."""
+    assert set(RESPONSE_SHAPES) == {pattern.pattern for pattern in ALLOWED_PATHS}
+    assert RESPONSE_SHAPES[r"^events$"] == (dict, list)
+    for pattern in (r"^useraccounts/current$", r"^communityposts$", r"^communityposts/\d+$"):
+        assert RESPONSE_SHAPES[pattern] == (dict,)
+
+
+async def test_whitelisted_path_without_a_shape_is_refused(
+    client: SocialSchoolsClient,
+    api: FakeApi,
+    token_manager: FakeTokenManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A whitelisted path without a declared shape is refused before any token or network use."""
+    monkeypatch.setattr(client_module, "RESPONSE_SHAPES", {})
+    with pytest.raises(RequestNotAllowed) as exc_info:
+        await client.async_get_current_account()
+    assert_sanitised(exc_info.value)
+    assert token_manager.calls == []
+    assert api.requests == []
+
+
+OBJECT_ENDPOINTS = [
+    pytest.param(lambda c: c.async_get_current_account(), r"^useraccounts/current$", id="account"),
+    pytest.param(lambda c: c.async_get_posts(SCHOOL_ID), r"^communityposts$", id="posts"),
+    pytest.param(lambda c: c.async_get_post(SCHOOL_ID, 12), r"^communityposts/\d+$", id="post"),
+]
+SHAPE_START = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)
+SHAPE_END = SHAPE_START + timedelta(days=30)
+
+
+@pytest.mark.parametrize(("call", "pattern"), OBJECT_ENDPOINTS)
+@pytest.mark.parametrize(
+    "value",
+    [[], [{"id": 1, "title": "private-title"}], "private-text", 3, None, True],
+    ids=["empty-list", "list", "string", "number", "null", "bool"],
+)
+async def test_object_endpoints_refuse_other_top_level_values(
+    client: SocialSchoolsClient, api: FakeApi, call: Any, pattern: str, value: Any
+) -> None:
+    """Valid JSON that is not an object (a list included) is refused with the status only."""
+    api.reply(raw=json.dumps(value).encode())
+    with pytest.raises(ApiError) as exc_info:
+        await call(client)
+    assert str(exc_info.value) == f"GET {pattern}: unexpected JSON shape"
+    assert exc_info.value.status == 200
+    assert_sanitised(exc_info.value)
+    assert_no_body_in_chain(exc_info.value)
+
+
+@pytest.mark.parametrize(("call", "pattern"), OBJECT_ENDPOINTS)
+async def test_object_endpoints_accept_an_object(
+    client: SocialSchoolsClient, api: FakeApi, call: Any, pattern: str
+) -> None:
+    """A JSON object passes the shape check unchanged."""
+    api.reply(json={"values": [], "id": 12})
+    assert await call(client) == {"values": [], "id": 12}
+
+
+@pytest.mark.parametrize(
+    "value", ["private-text", 3, None, True], ids=["string", "number", "null", "bool"]
+)
+async def test_events_refuse_scalar_top_level_values(
+    client: SocialSchoolsClient, api: FakeApi, value: Any
+) -> None:
+    """The calendar must answer with a list or an object."""
+    api.reply(raw=json.dumps(value).encode())
+    with pytest.raises(ApiError) as exc_info:
+        await client.async_get_events(SCHOOL_ID, SHAPE_START, SHAPE_END)
+    assert str(exc_info.value) == "GET ^events$: unexpected JSON shape"
+    assert exc_info.value.status == 200
+    assert_sanitised(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[], [{"id": 1, "title": "x"}], {"values": [{"id": 1}]}],
+    ids=["empty-list", "list", "values-object"],
+)
+async def test_events_accept_a_list_or_an_object(
+    client: SocialSchoolsClient, api: FakeApi, value: Any
+) -> None:
+    """A list of events (the API's answer) and a ``{"values": [...]}`` object both pass."""
+    api.reply(raw=json.dumps(value).encode())
+    assert await client.async_get_events(SCHOOL_ID, SHAPE_START, SHAPE_END) == value
+
+
+async def test_shape_is_checked_on_the_retried_response(
+    client: SocialSchoolsClient, api: FakeApi, token_manager: FakeTokenManager
+) -> None:
+    """After the 401 retry the second body still has to have the declared shape."""
+    api.reply(status=401)
+    api.reply(raw=b"[]")
+    with pytest.raises(ApiError) as exc_info:
+        await client.async_get_current_account()
+    assert str(exc_info.value) == "GET ^useraccounts/current$: unexpected JSON shape"
+    assert token_manager.refreshes == 1
+    assert len(api.requests) == 2
+
+
+@pytest.mark.parametrize("depth", [MAX_JSON_DEPTH, 100_000], ids=["one-over", "extreme"])
+async def test_too_deep_json_is_refused_without_json_loads(
+    client: SocialSchoolsClient, api: FakeApi, monkeypatch: pytest.MonkeyPatch, depth: int
+) -> None:
+    """Nesting beyond MAX_JSON_DEPTH is refused by the scan: json.loads never sees the body.
+
+    The object around the arrays adds one level, so ``depth`` arrays nest one too deep.
+    """
+
+    def loads(_text: str) -> Any:
+        raise AssertionError("json.loads must not run for this body")
+
+    monkeypatch.setattr(payload_module, "json", SimpleNamespace(loads=loads))
+    api.reply(raw=b'{"values":' + b"[" * depth + b"]" * depth + b"}")
+    with pytest.raises(ApiError) as exc_info:
+        await client.async_get_posts(SCHOOL_ID)
+    assert str(exc_info.value) == "GET ^communityposts$: invalid JSON"
+    assert exc_info.value.status == 200
+    assert_no_body_in_chain(exc_info.value)
+
+
+async def test_json_at_the_depth_limit_is_accepted(
+    client: SocialSchoolsClient, api: FakeApi
+) -> None:
+    """An object holding MAX_JSON_DEPTH - 1 nested arrays is exactly at the limit."""
+    inner = b"[" * (MAX_JSON_DEPTH - 1) + b"]" * (MAX_JSON_DEPTH - 1)
+    api.reply(raw=b'{"values":' + inner + b"}")
+    result = await client.async_get_posts(SCHOOL_ID)
+    assert isinstance(result, dict)
+    assert isinstance(result["values"], list)
 
 
 @pytest.mark.parametrize("chunked", [False, True], ids=["content-length", "chunked"])

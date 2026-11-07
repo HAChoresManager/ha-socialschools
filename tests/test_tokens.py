@@ -19,7 +19,7 @@ from multidict import CIMultiDict
 import pytest
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.socialschools import tokens as tokens_module
+from custom_components.socialschools import payload as payload_module, tokens as tokens_module
 from custom_components.socialschools.const import (
     DEFAULT_EXPIRES_IN,
     MAX_EXPIRES_IN,
@@ -363,15 +363,46 @@ async def test_refresh_tokens_truncated_json_keeps_no_body(
 
 
 async def test_refresh_tokens_deeply_nested_json_is_api_error(
-    endpoint: TokenEndpoint, session: ClientSession, issuer: str
+    endpoint: TokenEndpoint,
+    session: ClientSession,
+    issuer: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """JSON nested beyond the recursion limit (RecursionError) is an API error, not a crash."""
+    """JSON nested beyond MAX_JSON_DEPTH is invalid JSON on every interpreter.
+
+    The depth scan refuses it before json.loads runs, so neither the recursion limit
+    nor the C stack size decides the outcome.
+    """
+
+    def loads(_text: str) -> Any:
+        raise AssertionError("json.loads must not run for this body")
+
+    monkeypatch.setattr(payload_module, "json", SimpleNamespace(loads=loads))
     endpoint.reply(raw=b"[" * 100_000 + b"]" * 100_000)
 
     with pytest.raises(ApiError) as excinfo:
         await async_refresh_tokens(session, "private-refresh-1", issuer=issuer)
 
     assert "invalid JSON" in str(excinfo.value)
+    assert_no_body_in_chain(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b'[{"access_token": "private-access-2"}]', b'"private-access-2"', b"null", b"42"],
+    ids=["list", "string", "null", "number"],
+)
+async def test_refresh_tokens_non_object_is_unexpected_shape(
+    endpoint: TokenEndpoint, session: ClientSession, issuer: str, raw: bytes
+) -> None:
+    """Valid JSON that is not an object (a list included) is refused without echoing it."""
+    endpoint.reply(raw=raw)
+
+    with pytest.raises(ApiError) as excinfo:
+        await async_refresh_tokens(session, "private-refresh-1", issuer=issuer)
+
+    assert str(excinfo.value) == "token refresh: unexpected JSON shape"
+    assert excinfo.value.status == 200
     assert_no_body_in_chain(excinfo.value)
 
 

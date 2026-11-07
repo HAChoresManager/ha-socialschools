@@ -4,15 +4,16 @@ Every call goes through :meth:`SocialSchoolsClient.async_request`, the single
 place that talks to the API.  It lets only whitelisted ``GET`` paths through,
 attaches the bearer token and the school headers, retries once with a renewed
 token on 401 and maps every outcome onto the integration's exception
-hierarchy.  Redirects are never followed; response bodies, tokens and query
-strings never end up in messages or logs.
+hierarchy.  Every endpoint also has a declared response shape (a JSON object,
+or for the calendar a list or an object); a body of another shape is an
+error, never passed on.  Redirects are never followed; response bodies, tokens
+and query strings never end up in messages or logs.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-import json
 import logging
 import re
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,7 @@ from .const import (
     USER_AGENT,
 )
 from .errors import ApiError, CannotConnect, InvalidAuth, RequestNotAllowed
+from .payload import async_read_limited, decode_json
 
 if TYPE_CHECKING:
     from .tokens import TokenManager
@@ -49,9 +51,23 @@ The anchored patterns leave no room for a leading slash, a scheme, a query, a
 fragment or a ``..`` segment, so nothing else is ever requested.
 """
 
+_OBJECT: tuple[type, ...] = (dict,)
+_OBJECT_OR_LIST: tuple[type, ...] = (dict, list)
+
+RESPONSE_SHAPES: Mapping[str, tuple[type, ...]] = {
+    r"^useraccounts/current$": _OBJECT,
+    r"^communityposts$": _OBJECT,
+    r"^communityposts/\d+$": _OBJECT,
+    r"^events$": _OBJECT_OR_LIST,
+}
+"""Accepted top-level JSON types per whitelisted path, keyed by the pattern source.
+
+The calendar answers with a list of events; an object (``{"values": [...]}``) is
+accepted too, as ``models.parse_events`` reads both.  Every other endpoint
+answers with an object.  A whitelisted path without an entry here is refused.
+"""
+
 _EVENT_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-_INVALID = object()
-"""Marker for a body that is not JSON; the decode error (which holds the body) is dropped."""
 
 
 def _check_request(method: str, path: str) -> re.Pattern[str]:
@@ -67,36 +83,12 @@ def _check_request(method: str, path: str) -> re.Pattern[str]:
     raise RequestNotAllowed("path is not a whitelisted relative API path")
 
 
-def _decode_json(body: bytes) -> Any:
-    """Return the decoded JSON body, or ``_INVALID`` when it is not JSON (nothing of it is kept)."""
-    try:
-        return json.loads(body)
-    except (ValueError, RecursionError):
-        return _INVALID
-
-
-async def _async_read_limited(response: aiohttp.ClientResponse, limit: int) -> bytes | None:
-    """Return the body when it is at most ``limit`` bytes, else None without buffering the rest.
-
-    A ``Content-Length`` over the limit is refused before reading; otherwise at most
-    ``limit + 1`` bytes are read from the (decompressed) stream.
-    """
-    try:
-        declared = int(response.headers.get("Content-Length", ""))
-    except ValueError:  # absent, malformed or absurdly long
-        declared = None
-    if declared is not None and declared > limit:
-        return None
-    stream = response.content
-    chunks: list[bytes] = []
-    size = 0
-    while size <= limit:
-        chunk = await stream.read(limit + 1 - size)
-        if not chunk:
-            return b"".join(chunks)
-        chunks.append(chunk)
-        size += len(chunk)
-    return None
+def _response_shape(pattern: re.Pattern[str]) -> tuple[type, ...]:
+    """Return the accepted top-level JSON types of a whitelisted path, or raise RequestNotAllowed."""
+    shape = RESPONSE_SHAPES.get(pattern.pattern)
+    if shape is None:
+        raise RequestNotAllowed("path has no declared response shape")
+    return shape
 
 
 def _format_utc(value: datetime) -> str:
@@ -155,10 +147,13 @@ class SocialSchoolsClient:
         (RequestNotAllowed).  A 401 is retried once with a renewed access token;
         a second 401 raises InvalidAuth.  Redirects, 5xx, network errors and
         timeouts raise CannotConnect; other statuses, a body over
-        MAX_API_BODY_BYTES and invalid JSON ApiError.
+        MAX_API_BODY_BYTES, invalid or too deeply nested JSON and a top-level
+        value outside the path's RESPONSE_SHAPES entry ApiError.
         """
-        what = f"GET {_check_request(method, path).pattern}"
+        pattern = _check_request(method, path)
+        what = f"GET {pattern.pattern}"
         url = self._build_url(path)
+        shape = _response_shape(pattern)
         token = await self._token_manager.async_get_access_token()
         status, body = await self._async_send(url, token, school_id, params, what)
         if status == 401:
@@ -174,9 +169,9 @@ class SocialSchoolsClient:
             raise CannotConnect(f"{what}: HTTP {status}")
         if not 200 <= status < 300:
             raise ApiError(f"{what}: HTTP {status}", status)
-        payload = _decode_json(body)
-        if payload is _INVALID:
-            raise ApiError(f"{what}: invalid JSON", status)
+        payload = decode_json(body, what=what, status=status, max_bytes=MAX_API_BODY_BYTES)
+        if not isinstance(payload, shape):
+            raise ApiError(f"{what}: unexpected JSON shape", status)
         return payload
 
     async def async_get_current_account(self) -> dict[str, Any]:
@@ -196,8 +191,12 @@ class SocialSchoolsClient:
 
     async def async_get_events(
         self, school_id: int, start: datetime, end: datetime
-    ) -> list[dict[str, Any]]:
-        """Return the calendar events between two aware datetimes (sent as UTC)."""
+    ) -> list[Any] | dict[str, Any]:
+        """Return the calendar events between two aware datetimes (sent as UTC).
+
+        The API answers with a list of events; an object such as ``{"values": [...]}``
+        is passed on as well (``models.parse_events`` reads both).
+        """
         params = {"from": _format_utc(start), "until": _format_utc(end)}
         return await self.async_request("GET", "events", school_id=school_id, params=params)
 
@@ -246,7 +245,7 @@ class SocialSchoolsClient:
             ) as response:
                 status = response.status
                 body = (
-                    await _async_read_limited(response, MAX_API_BODY_BYTES)
+                    await async_read_limited(response, MAX_API_BODY_BYTES)
                     if 200 <= status < 300
                     else b""
                 )

@@ -20,6 +20,8 @@ jobs:
 
   hacs:
     name: HACS
+    # The HACS action can only validate public repositories; skipped while private.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +51,7 @@ jobs:
           python3.12 -m py_compile
           custom_components/socialschools/const.py
           custom_components/socialschools/errors.py
+          custom_components/socialschools/payload.py
           custom_components/socialschools/login.py
           custom_components/socialschools/tokens.py
           custom_components/socialschools/client.py

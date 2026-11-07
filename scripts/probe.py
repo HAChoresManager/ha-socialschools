@@ -36,7 +36,7 @@ import aiohttp
 
 PACKAGE_NAME = "ss_probe"
 PACKAGE_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "socialschools"
-MODULE_NAMES = ("const", "errors", "textutil", "models", "login", "tokens", "client")
+MODULE_NAMES = ("const", "errors", "payload", "textutil", "models", "login", "tokens", "client")
 MAX_MESSAGE_LENGTH = 200
 
 _URL_RE = re.compile(r"[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)

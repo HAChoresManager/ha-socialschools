@@ -18,6 +18,7 @@ custom_components/socialschools/
   manifest.json
   const.py             PURE: domain, protocol constants, option keys, limits
   errors.py            PURE: exception hierarchy
+  payload.py           PURE: bounded body reads + JSON decoding with a depth limit (shared)
   login.py             PURE: native app login (PKCE + /Account/Login form) and code exchange
   tokens.py            PURE: TokenManager (refresh, expiry, rotation callback)
   client.py            PURE: SocialSchoolsClient (GET whitelist, headers, 401 retry)
@@ -82,6 +83,7 @@ MAX_EXPIRES_IN = 10 * 365 * 86400        # seconds; a larger expires_in is clamp
 MAX_LOGIN_PAGE_BYTES = 1_048_576         # 1 MiB; a larger login page → UnsupportedLogin
 MAX_TOKEN_BODY_BYTES = 1_048_576         # 1 MiB; a larger token response → ApiError
 MAX_API_BODY_BYTES = 8 * 1_048_576       # 8 MiB; a larger API response → ApiError
+MAX_JSON_DEPTH = 64                      # deepest array/object nesting decode_json accepts
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})  # plain http only for these hosts
 
 CONF_USERNAME = "username"
@@ -276,7 +278,8 @@ async def async_exchange_code(
 ) -> TokenResponse:
     """POST {issuer}/connect/token form: grant_type=authorization_code, code, code_verifier,
     redirect_uri, client_id. Raises InvalidAuth on 400/401/403, CannotConnect on network/timeout/5xx,
-    ApiError on other statuses or invalid JSON. A response without a non-empty refresh_token raises
+    ApiError on other statuses, invalid JSON (payload.decode_json) or a top-level value that is not an
+    object ("unexpected JSON shape"). A response without a non-empty refresh_token raises
     ApiError (message: no refresh token). access_token must be a non-empty string without control
     characters, else ApiError."""
 
@@ -342,6 +345,8 @@ running is stored before a reload starts over from the stored one.
 
 ```python
 ALLOWED_PATHS: tuple[re.Pattern, ...]  # ^useraccounts/current$, ^communityposts$, ^communityposts/\d+$, ^events$
+RESPONSE_SHAPES: Mapping[str, tuple[type, ...]]  # accepted top-level JSON types, keyed by pattern source:
+    # useraccounts/current, communityposts, communityposts/{id} → (dict,); events → (dict, list)
 
 class SocialSchoolsClient:
     def __init__(self, session, token_manager: TokenManager, *, base_url: str = API_BASE_URL,
@@ -359,18 +364,46 @@ class SocialSchoolsClient:
         On 401: once, get a token with force_refresh=True (stale=<token used>) and retry; a second 401
         → InvalidAuth. 400/403/404/409/... → ApiError(status). 5xx, ClientError, TimeoutError,
         3xx → CannotConnect (3xx counts as connectivity problem; never followed). A 2xx body larger than
-        MAX_API_BODY_BYTES (Content-Length first, then at most limit + 1 bytes read) → ApiError. Invalid
-        JSON (including deeply nested JSON that exhausts the recursion limit) → ApiError without the body
-        chained as __cause__/__context__."""
+        MAX_API_BODY_BYTES (Content-Length first, then at most limit + 1 bytes read) → ApiError. The body
+        is decoded with payload.decode_json (invalid, non-UTF-8 or deeper than MAX_JSON_DEPTH → ApiError
+        "invalid JSON" without the body chained as __cause__/__context__); a top-level value whose type
+        is not in RESPONSE_SHAPES for the path → ApiError "unexpected JSON shape". A whitelisted path
+        without a RESPONSE_SHAPES entry → RequestNotAllowed, checked after the URL guard and before
+        any token or network access."""
     @property
     def token_manager(self) -> TokenManager: ...                       # the manager given to __init__
     async def async_get_current_account(self) -> dict[str, Any]       # GET useraccounts/current (no school headers)
     async def async_get_posts(self, school_id: int, *, offset: int = 0, limit: int = FEED_LIMIT) -> dict[str, Any]
         # GET communityposts?offset=&limit=&filterType=0  → {"values": [...], "totalCount": n, "timeStamp": ...}
     async def async_get_post(self, school_id: int, post_id: int) -> dict[str, Any]   # GET communityposts/{id}
-    async def async_get_events(self, school_id: int, start: datetime, end: datetime) -> list[dict[str, Any]]
+    async def async_get_events(self, school_id: int, start: datetime, end: datetime) -> list[Any] | dict[str, Any]
         # GET events?from=<utc Z>&until=<utc Z>; naive datetimes raise ValueError; format "%Y-%m-%dT%H:%M:%SZ"
 ```
+
+### 6a. payload.py (PURE, shared by login.py, tokens.py and client.py)
+
+```python
+async def async_read_limited(response, limit: int) -> bytes | None
+    # Content-Length over the limit → None before reading; else at most limit + 1 bytes are read,
+    # None when the body is longer. login.py (HTML pages), tokens.py and client.py all use it.
+def json_nesting_depth_exceeds(text: str, limit: int) -> bool
+    # one linear pass, no recursion: '[' / '{' outside strings +1, ']' / '}' -1 (never below 0);
+    # inside a string a backslash escapes the next character. Does not validate JSON.
+def decode_json(body: bytes, *, what: str, status: int | None, max_bytes: int,
+                max_depth: int = MAX_JSON_DEPTH) -> Any
+    # len(body) > max_bytes → ApiError("<what>: response body too large", status);
+    # not UTF-8 (a BOM is tolerated), deeper than max_depth, or rejected by json.loads (ValueError,
+    # RecursionError) → ApiError("<what>: invalid JSON", status), raised outside every except block
+    # so no JSONDecodeError (.doc) or UnicodeDecodeError (.object) holding the body stays attached.
+```
+
+`json.loads` recurses once per nesting level, and whether 100 000 levels end in
+`RecursionError` depends on the interpreter version, its recursion limit and the
+C stack size. The depth scan runs before `json.loads`, so the outcome is the same
+on every build. The scan costs about 2 ms for a 50 KB feed and stays linear up to
+the body cap (about 0.4 s for a hostile 8 MiB body). Only UTF-8 bodies are
+accepted (RFC 8259 §8.1): the body is decoded once and the scan and `json.loads`
+read the same text, whereas `json.loads` on bytes would also guess UTF-16/32.
 
 ## 7. models.py and textutil.py (PURE)
 

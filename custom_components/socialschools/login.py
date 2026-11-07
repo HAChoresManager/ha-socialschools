@@ -35,6 +35,7 @@ from .const import (
     USER_AGENT,
 )
 from .errors import CannotConnect, InvalidAuth, UnsupportedLogin
+from .payload import async_read_limited
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -267,30 +268,6 @@ def _parse_callback(url: URL, *, redirect: URL, state: str, issuer: str) -> str:
     return values["code"][0]
 
 
-async def _async_read_limited(response: aiohttp.ClientResponse, limit: int) -> bytes | None:
-    """Return the body when it is at most ``limit`` bytes, else None without buffering the rest.
-
-    A ``Content-Length`` over the limit is refused before reading; otherwise at most
-    ``limit + 1`` bytes are read from the (decompressed) stream.
-    """
-    try:
-        declared = int(response.headers.get("Content-Length", ""))
-    except ValueError:  # absent, malformed or absurdly long
-        declared = None
-    if declared is not None and declared > limit:
-        return None
-    stream = response.content
-    chunks: list[bytes] = []
-    size = 0
-    while size <= limit:
-        chunk = await stream.read(limit + 1 - size)
-        if not chunk:
-            return b"".join(chunks)
-        chunks.append(chunk)
-        size += len(chunk)
-    return None
-
-
 def _decode_page(raw: bytes, charset: str | None) -> str:
     """Decode a page with its declared charset (UTF-8 by default), replacing undecodable bytes.
 
@@ -362,7 +339,7 @@ async def async_native_login(
                 location = response.headers.get("Location")
                 charset = response.charset
                 raw = (
-                    await _async_read_limited(response, MAX_LOGIN_PAGE_BYTES)
+                    await async_read_limited(response, MAX_LOGIN_PAGE_BYTES)
                     if status == 200
                     else b""
                 )

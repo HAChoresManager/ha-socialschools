@@ -41,6 +41,10 @@ MAX_EXPIRES_IN: Final = 10 * 365 * 86400  # seconds; a larger expires_in is clam
 MAX_LOGIN_PAGE_BYTES: Final = 1_048_576  # 1 MiB, pages of the login flow
 MAX_TOKEN_BODY_BYTES: Final = 1_048_576  # 1 MiB, token endpoint responses
 MAX_API_BODY_BYTES: Final = 8 * 1_048_576  # 8 MiB, API responses
+# Deepest array/object nesting accepted in a JSON body, checked before json.loads so the
+# outcome never depends on the interpreter's recursion limit or C stack size.  Real
+# responses nest about four levels deep.
+MAX_JSON_DEPTH: Final = 64
 # Plain http is accepted only for these hosts (local test servers); any other host needs https.
 LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "::1", "localhost"})
 

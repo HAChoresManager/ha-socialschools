@@ -12,7 +12,6 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import inspect
-import json
 import logging
 import time
 from typing import Any
@@ -32,6 +31,7 @@ from .const import (
     USER_AGENT,
 )
 from .errors import ApiError, CannotConnect, InvalidAuth
+from .payload import async_read_limited, decode_json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,8 +40,6 @@ RefreshTokenCallback = Callable[[str], Awaitable[None] | None]
 
 _EXCHANGE_AUTH_STATUSES = frozenset({400, 401, 403})
 _REFRESH_AUTH_STATUSES = frozenset({400, 401})
-_INVALID = object()
-"""Marker for a body that is not JSON; the decode error (which holds the body) is dropped."""
 
 
 @dataclass(frozen=True)
@@ -79,38 +77,6 @@ def _mark_outcome_retrieved(task: asyncio.Task[Any]) -> None:
     """
     if not task.cancelled():
         task.exception()
-
-
-def _decode_json(body: bytes) -> Any:
-    """Return the decoded JSON body, or ``_INVALID`` when it is not JSON (nothing of it is kept)."""
-    try:
-        return json.loads(body)
-    except (ValueError, RecursionError):
-        return _INVALID
-
-
-async def _async_read_limited(response: aiohttp.ClientResponse, limit: int) -> bytes | None:
-    """Return the body when it is at most ``limit`` bytes, else None without buffering the rest.
-
-    A ``Content-Length`` over the limit is refused before reading; otherwise at most
-    ``limit + 1`` bytes are read from the (decompressed) stream.
-    """
-    try:
-        declared = int(response.headers.get("Content-Length", ""))
-    except ValueError:  # absent, malformed or absurdly long
-        declared = None
-    if declared is not None and declared > limit:
-        return None
-    stream = response.content
-    chunks: list[bytes] = []
-    size = 0
-    while size <= limit:
-        chunk = await stream.read(limit + 1 - size)
-        if not chunk:
-            return b"".join(chunks)
-        chunks.append(chunk)
-        size += len(chunk)
-    return None
 
 
 def _parse_token_payload(payload: Any, *, what: str) -> TokenResponse:
@@ -152,7 +118,7 @@ async def _async_token_request(
         ) as response:
             status = response.status
             body = (
-                await _async_read_limited(response, MAX_TOKEN_BODY_BYTES) if status == 200 else b""
+                await async_read_limited(response, MAX_TOKEN_BODY_BYTES) if status == 200 else b""
             )
     except (aiohttp.ClientError, TimeoutError) as err:
         raise CannotConnect(f"{what}: {type(err).__name__}") from err
@@ -165,9 +131,7 @@ async def _async_token_request(
         raise ApiError(f"{what}: HTTP {status}", status)
     if body is None:
         raise ApiError(f"{what}: response body too large", status)
-    payload = _decode_json(body)
-    if payload is _INVALID:
-        raise ApiError(f"{what}: invalid JSON", status)
+    payload = decode_json(body, what=what, status=status, max_bytes=MAX_TOKEN_BODY_BYTES)
     return _parse_token_payload(payload, what=what)
 
 
