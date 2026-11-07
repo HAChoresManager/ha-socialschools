@@ -8,8 +8,9 @@ bodies with it as well and decode them with :func:`decode_json`.
 document ends in ``RecursionError`` depends on the interpreter version, its
 recursion limit and the size of the C stack.  :func:`decode_json` therefore
 bounds the body size and checks the nesting depth itself, in one linear pass
-without recursion, before ``json.loads`` runs: the outcome is the same on every
-Python build.
+without recursion, before ``json.loads`` runs.  Integer literals go through a
+hook with its own digit bound instead of the process-wide ``int_max_str_digits``
+setting.  The outcome is the same on every Python build and configuration.
 """
 
 from __future__ import annotations
@@ -19,22 +20,32 @@ from typing import Any
 
 import aiohttp
 
-from .const import MAX_JSON_DEPTH
+from .const import MAX_JSON_DEPTH, MAX_JSON_INT_DIGITS
 from .errors import ApiError
 
 _INVALID = object()
 """Marker for a body that is not usable JSON; no exception that holds the body survives."""
+
+_MAX_CONTENT_LENGTH_CHARS = 640
+"""Longest ``Content-Length`` value that is parsed; a longer one counts as malformed.
+
+``int`` consults the process-wide ``int_max_str_digits`` setting only above 640 digits
+(``sys.int_info.str_digits_check_threshold``, also the lowest non-zero setting), so the
+outcome is the same on every interpreter.  Real values have at most 20 digits.
+"""
 
 
 async def async_read_limited(response: aiohttp.ClientResponse, limit: int) -> bytes | None:
     """Return the body when it is at most ``limit`` bytes, else None without buffering the rest.
 
     A ``Content-Length`` over the limit is refused before reading; otherwise at most
-    ``limit + 1`` bytes are read from the (decompressed) stream.
+    ``limit + 1`` bytes are read from the (decompressed) stream.  An absent or
+    malformed ``Content-Length``, or one longer than 640 characters, is ignored.
     """
+    header = response.headers.get("Content-Length", "")
     try:
-        declared = int(response.headers.get("Content-Length", ""))
-    except ValueError:  # absent, malformed or absurdly long
+        declared = int(header) if len(header) <= _MAX_CONTENT_LENGTH_CHARS else None
+    except ValueError:  # absent or malformed
         declared = None
     if declared is not None and declared > limit:
         return None
@@ -92,12 +103,13 @@ def decode_json(
     """Return the decoded JSON value of a UTF-8 ``body``, or raise ApiError.
 
     The body must be at most ``max_bytes`` long (else ``"<what>: response body
-    too large"``), UTF-8 encoded (a byte order mark is tolerated) and nest at most
-    ``max_depth`` levels; anything else, including what ``json.loads`` rejects
-    with ValueError or RecursionError, is ``"<what>: invalid JSON"``.  The error
-    carries ``status`` and is raised outside every ``except`` block, so neither
-    ``__cause__`` nor ``__context__`` keeps a decode error whose ``doc`` or
-    ``object`` would hold the body.
+    too large"``), UTF-8 encoded (a byte order mark is tolerated), nest at most
+    ``max_depth`` levels and hold no integer literal of more than
+    MAX_JSON_INT_DIGITS digits; anything else, including what ``json.loads``
+    rejects with ValueError or RecursionError, is ``"<what>: invalid JSON"``.
+    The error carries ``status`` and is raised outside every ``except`` block, so
+    neither ``__cause__`` nor ``__context__`` keeps a decode error whose ``doc``
+    or ``object`` would hold the body.
     """
     if len(body) > max_bytes:
         raise ApiError(f"{what}: response body too large", status)
@@ -105,6 +117,20 @@ def decode_json(
     if payload is _INVALID:
         raise ApiError(f"{what}: invalid JSON", status)
     return payload
+
+
+def _parse_int(literal: str) -> int:
+    """Convert a JSON integer literal of at most MAX_JSON_INT_DIGITS digits, else ValueError.
+
+    ``json.loads`` on its own leaves the bound to the process-wide
+    ``int_max_str_digits`` setting: 4300 digits by default, unlimited at 0, and the
+    conversion cost grows quadratically with the length.  A non-zero setting is never
+    below 640 (``sys.int_info.str_digits_check_threshold``), so ``int`` never refuses
+    a literal that passes here, whatever the interpreter's configuration.
+    """
+    if len(literal) > MAX_JSON_INT_DIGITS and len(literal.lstrip("-")) > MAX_JSON_INT_DIGITS:
+        raise ValueError("integer literal has too many digits")
+    return int(literal)
 
 
 def _decode(body: bytes, max_depth: int) -> Any:
@@ -116,6 +142,6 @@ def _decode(body: bytes, max_depth: int) -> Any:
     if json_nesting_depth_exceeds(text, max_depth):
         return _INVALID
     try:
-        return json.loads(text)
+        return json.loads(text, parse_int=_parse_int)
     except (ValueError, RecursionError):
         return _INVALID

@@ -351,10 +351,10 @@ pytest tests/test_probe.py -q             # of één bestand
 ruff check .
 ```
 
-- `const.py`, `errors.py`, `login.py`, `tokens.py`, `client.py`, `models.py` en `textutil.py` in
-  `custom_components/socialschools` zijn "pure" modules zonder Home Assistant-afhankelijkheid
-  (alleen de standaardbibliotheek, `aiohttp`, `yarl` en `multidict`) en draaien ook op
-  Python 3.12; `scripts/probe.py` laadt ze via een stand-in pakket.
+- `const.py`, `errors.py`, `payload.py`, `login.py`, `tokens.py`, `client.py`, `models.py` en
+  `textutil.py` in `custom_components/socialschools` zijn "pure" modules zonder Home
+  Assistant-afhankelijkheid (alleen de standaardbibliotheek, `aiohttp`, `yarl` en `multidict`) en
+  draaien ook op Python 3.12; `scripts/probe.py` laadt ze via een stand-in pakket.
 - De tests gebruiken uitsluitend synthetische gegevens; alles wat op een geheim lijkt draagt de
   marker `private-`, zodat lekken in foutmeldingen opvallen. HTTP wordt afgevangen met
   `aioclient_mock` of een lokale `aiohttp`-testserver; er gaat niets naar buiten.

@@ -7,8 +7,10 @@ import json
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant, State
+from homeassistant.helpers.json import json_bytes
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.test_util import aiohttp as aiohttp_mock_module
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.socialschools.const import (
@@ -333,3 +335,46 @@ async def test_states_follow_a_poll_with_a_new_post(
     count = _state(hass, POST_COUNT_ID)
     assert count.state == "3"
     assert [post[ATTR_POST_ID] for post in count.attributes[ATTR_POSTS]] == [104, 103, 102, 101]
+
+
+async def test_unpaired_surrogates_from_the_api_keep_the_states_serialisable(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_api: AiohttpClientMocker,
+    api_state: ApiState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Half an emoji (a ``\\ud83d`` escape) in the feed ends up as U+FFFD in both sensors.
+
+    The fake API sends non-ASCII as ``\\u`` escapes, as the real one does.  A lone surrogate
+    used to reach the attributes, where the byte-budget check (UTF-8) and Home Assistant's
+    JSON encoder both fail on it.
+    """
+    monkeypatch.setattr(aiohttp_mock_module, "json_dumps", json.dumps)
+    cut = "Nieuws \ud83d"
+    api_state.posts[0] = make_post(
+        103,
+        "2026-11-03T08:00:00Z",
+        title=cut,
+        body=f"<p>{cut}</p>",
+        groups=(cut,),
+        author=cut,
+        attachments=(f"{cut}.pdf",),
+    )
+    await setup_integration(hass, mock_config_entry)
+
+    cleaned = "Nieuws \ufffd"
+    latest = _state(hass, LATEST_POST_ID)
+    assert latest.state == cleaned
+    assert latest.attributes[ATTR_TEXT] == cleaned
+    assert latest.attributes[ATTR_GROUP] == cleaned
+    assert latest.attributes[ATTR_AUTHOR] == cleaned
+    assert latest.attributes[ATTR_ATTACHMENTS] == [f"{cleaned}.pdf"]
+    summary = _state(hass, POST_COUNT_ID).attributes[ATTR_POSTS][0]
+    assert summary[ATTR_POST_ID] == 103
+    assert summary[ATTR_TITLE] == cleaned
+    assert summary[ATTR_GROUP] == cleaned
+    assert summary[ATTR_AUTHOR] == cleaned
+    assert summary[ATTR_SHORT_TEXT] == cleaned
+    for state in hass.states.async_all():
+        json_bytes(state.as_dict())  # raises TypeError on a lone surrogate

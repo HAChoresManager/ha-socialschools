@@ -23,6 +23,7 @@ from custom_components.socialschools import payload as payload_module, tokens as
 from custom_components.socialschools.const import (
     DEFAULT_EXPIRES_IN,
     MAX_EXPIRES_IN,
+    MAX_JSON_INT_DIGITS,
     MAX_TOKEN_BODY_BYTES,
     OIDC_CLIENT_ID,
     OIDC_REDIRECT_URI,
@@ -374,7 +375,7 @@ async def test_refresh_tokens_deeply_nested_json_is_api_error(
     nor the C stack size decides the outcome.
     """
 
-    def loads(_text: str) -> Any:
+    def loads(_text: str, **_kwargs: Any) -> Any:
         raise AssertionError("json.loads must not run for this body")
 
     monkeypatch.setattr(payload_module, "json", SimpleNamespace(loads=loads))
@@ -512,6 +513,54 @@ async def test_refresh_tokens_expires_in(
     result = await async_refresh_tokens(session, "private-refresh-1", issuer=issuer)
 
     assert result.expires_in == expected
+
+
+@pytest.mark.parametrize(
+    ("expires_in", "expected"),
+    [
+        ("9" * MAX_JSON_INT_DIGITS, MAX_EXPIRES_IN),
+        ("9" * (MAX_JSON_INT_DIGITS + 1), DEFAULT_EXPIRES_IN),
+        ("9" * 100_000, DEFAULT_EXPIRES_IN),
+    ],
+    ids=["at-the-bound", "one-over", "huge"],
+)
+async def test_refresh_tokens_long_expires_in_string_is_the_same_everywhere(
+    endpoint: TokenEndpoint,
+    session: ClientSession,
+    issuer: str,
+    int_max_str_digits: int,
+    expires_in: str,
+    expected: int,
+) -> None:
+    """A numeric expires_in string longer than MAX_JSON_INT_DIGITS is invalid on every interpreter.
+
+    Left to ``int``, the result would follow int_max_str_digits: 641 characters were clamped
+    to MAX_EXPIRES_IN at the default but invalid at 640, 100 000 invalid at the default but
+    clamped at 0 (after a conversion whose cost grows quadratically).
+    """
+    endpoint.reply(json=tokens(expires_in=expires_in))
+
+    result = await async_refresh_tokens(session, "private-refresh-1", issuer=issuer)
+
+    assert result.expires_in == expected
+
+
+async def test_refresh_tokens_integer_with_too_many_digits_is_invalid_json(
+    endpoint: TokenEndpoint, session: ClientSession, issuer: str, int_max_str_digits: int
+) -> None:
+    """A token body with an integer literal over MAX_JSON_INT_DIGITS digits is invalid JSON.
+
+    payload.decode_json bounds the literal itself, so this does not depend on the
+    process-wide int_max_str_digits setting either.
+    """
+    endpoint.reply(raw=b'{"access_token": "private-access-2", "expires_in": ' + b"9" * 5000 + b"}")
+
+    with pytest.raises(ApiError) as excinfo:
+        await async_refresh_tokens(session, "private-refresh-1", issuer=issuer)
+
+    assert str(excinfo.value) == "token refresh: invalid JSON"
+    assert excinfo.value.status == 200
+    assert_no_body_in_chain(excinfo.value)
 
 
 # --- TokenManager --------------------------------------------------------------------------

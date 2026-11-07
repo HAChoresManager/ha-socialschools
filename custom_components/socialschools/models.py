@@ -3,7 +3,7 @@
 The frozen dataclasses are the only shapes the Home Assistant layer works
 with.  The parse functions turn API JSON into them, tolerate missing optional
 fields, skip unusable items and never put response content into exception
-messages or log lines.
+messages or log lines.  Every text they produce can be encoded as UTF-8.
 """
 
 from __future__ import annotations
@@ -27,6 +27,11 @@ _ONE_HOUR = timedelta(hours=1)
 _MIDNIGHT = time(0)
 _ISO_DATE_TIME_RE = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 """Start of an ISO 8601 date *and* time; a bare date or week date is not a timestamp."""
+_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+"""A UTF-16 surrogate code point.  ``json.loads`` joins an escaped surrogate pair into one
+character, so a surrogate left in a decoded string is unpaired (``"\\ud83d"``, half of an
+emoji the server cut off) and cannot be encoded as UTF-8."""
+_REPLACEMENT_CHARACTER = "\ufffd"
 _MIN_YEAR = 1900
 _MAX_YEAR = 9000
 """Years outside this window are rejected: no school date lives there, and near the edges of
@@ -107,14 +112,23 @@ def _as_int(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _without_surrogates(value: str) -> str:
+    """Return ``value`` with every unpaired surrogate replaced by U+FFFD.
+
+    Home Assistant serialises states, attributes, device names and config entries as
+    UTF-8 JSON, which fails on such a character.
+    """
+    return _SURROGATE_RE.sub(_REPLACEMENT_CHARACTER, value)
+
+
 def _as_text(value: Any) -> str:
-    """Return ``value`` whitespace-collapsed when it is a string, else ``""``."""
-    return collapse_whitespace(value) if isinstance(value, str) else ""
+    """Return ``value`` whitespace-collapsed and UTF-8 safe when it is a string, else ``""``."""
+    return collapse_whitespace(_without_surrogates(value)) if isinstance(value, str) else ""
 
 
 def _as_plain_text(value: Any) -> str:
-    """Return ``value`` converted from HTML to plain text when it is a string, else ``""``."""
-    return html_to_text(value) if isinstance(value, str) else ""
+    """Return ``value`` as UTF-8 safe plain text (from HTML) when it is a string, else ``""``."""
+    return html_to_text(_without_surrogates(value)) if isinstance(value, str) else ""
 
 
 def _names(value: Any, key: str, *, unique: bool) -> tuple[str, ...]:

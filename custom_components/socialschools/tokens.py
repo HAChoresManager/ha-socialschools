@@ -21,6 +21,7 @@ import aiohttp
 from .const import (
     DEFAULT_EXPIRES_IN,
     MAX_EXPIRES_IN,
+    MAX_JSON_INT_DIGITS,
     MAX_TOKEN_BODY_BYTES,
     OIDC_CLIENT_ID,
     OIDC_ISSUER,
@@ -61,7 +62,14 @@ def _is_token_string(value: Any) -> bool:
 
 
 def _parse_expires_in(value: Any) -> int:
-    """Return ``value`` as seconds between 1 and MAX_EXPIRES_IN, else DEFAULT_EXPIRES_IN."""
+    """Return ``value`` as seconds between 1 and MAX_EXPIRES_IN, else DEFAULT_EXPIRES_IN.
+
+    A string longer than MAX_JSON_INT_DIGITS characters is invalid, like an integer
+    literal that long, so ``int`` never reaches the process-wide ``int_max_str_digits``
+    limit and the result is the same on every interpreter.
+    """
+    if isinstance(value, str) and len(value) > MAX_JSON_INT_DIGITS:
+        return DEFAULT_EXPIRES_IN
     try:
         seconds = int(value)
     except (TypeError, ValueError, OverflowError):

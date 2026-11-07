@@ -1,8 +1,8 @@
 """Tests that the protocol modules stay pure (DESIGN.md §1).
 
-``const``, ``errors``, ``login``, ``tokens``, ``client``, ``models`` and
-``textutil`` must import nothing from ``homeassistant`` (directly or
-indirectly), use only the standard library plus ``aiohttp``/``yarl``/
+``const``, ``errors``, ``payload``, ``login``, ``tokens``, ``client``,
+``models`` and ``textutil`` must import nothing from ``homeassistant`` (directly
+or indirectly), use only the standard library plus ``aiohttp``/``yarl``/
 ``multidict``, run on Python 3.12 and reach each other only through explicit
 relative imports, so that ``scripts/probe.py`` can load them under a stand-in
 package name without executing ``__init__.py``.

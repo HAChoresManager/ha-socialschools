@@ -9,10 +9,11 @@ synthetic; secret-like values carry the ``private-`` marker.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 import re
+import sys
 from typing import Any
 
 from freezegun.api import FrozenDateTimeFactory
@@ -54,11 +55,29 @@ SCHOOL_NAME = "Private School"
 
 RequestRecord = tuple[str, URL, dict[str, str]]
 
+INT_DIGIT_SETTINGS = (0, 640, 4300, 1_000_000)
+"""``int_max_str_digits`` values: unlimited, the lowest non-zero value, the default, high."""
+
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
     """Enable loading custom integrations in all tests."""
     return
+
+
+@pytest.fixture(params=INT_DIGIT_SETTINGS, ids=lambda digits: f"int_max_str_digits={digits}")
+def int_max_str_digits(request: pytest.FixtureRequest) -> Iterator[int]:
+    """Run the test under one process-wide ``int_max_str_digits`` setting, restored afterwards.
+
+    The pure modules bound every digit string they convert themselves, so their outcome
+    must not change with this setting.
+    """
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(request.param)
+    try:
+        yield request.param
+    finally:
+        sys.set_int_max_str_digits(previous)
 
 
 def make_account(

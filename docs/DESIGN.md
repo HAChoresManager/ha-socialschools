@@ -40,8 +40,8 @@ tests/                 pytest (pytest-homeassistant-custom-component)
 
 ### PURE modules
 
-`const.py`, `errors.py`, `login.py`, `tokens.py`, `client.py`, `models.py`
-and `textutil.py`:
+`const.py`, `errors.py`, `payload.py`, `login.py`, `tokens.py`, `client.py`,
+`models.py` and `textutil.py`:
 
 * import nothing from `homeassistant` (directly or indirectly), only the
   standard library, `aiohttp`, `yarl` and `multidict`;
@@ -50,7 +50,7 @@ and `textutil.py`:
   is fine;
 * import each other only with explicit relative imports (`from .const import
   ...`) so that `scripts/probe.py` can load them under a stand-in package
-  name without executing `__init__.py` (see §10).
+  name without executing `__init__.py` (see §13).
 
 A test (`tests/test_pure_modules.py`) imports them in a subprocess with a
 meta-path finder that raises on any `homeassistant` import.
@@ -84,6 +84,7 @@ MAX_LOGIN_PAGE_BYTES = 1_048_576         # 1 MiB; a larger login page → Unsupp
 MAX_TOKEN_BODY_BYTES = 1_048_576         # 1 MiB; a larger token response → ApiError
 MAX_API_BODY_BYTES = 8 * 1_048_576       # 8 MiB; a larger API response → ApiError
 MAX_JSON_DEPTH = 64                      # deepest array/object nesting decode_json accepts
+MAX_JSON_INT_DIGITS = 640                # longest integer literal (digits, no sign) decode_json accepts
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})  # plain http only for these hosts
 
 CONF_USERNAME = "username"
@@ -268,6 +269,7 @@ class TokenResponse:
     access_token: str = field(repr=False)          # never shown by repr()/str()
     refresh_token: str | None = field(repr=False)  # never shown by repr()/str()
     expires_in: int              # seconds; DEFAULT_EXPIRES_IN when missing or invalid, at most MAX_EXPIRES_IN
+                                 # (a string longer than MAX_JSON_INT_DIGITS characters is invalid)
 
 RefreshTokenCallback = Callable[[str], Awaitable[None] | None]
 
@@ -316,10 +318,14 @@ class TokenManager:
 ```
 
 Token endpoint bodies are read up to `MAX_TOKEN_BODY_BYTES` (`Content-Length`
-first, then at most limit + 1 bytes; a larger 200 body → `ApiError`). A body
-that is not JSON, including JSON nested deeply enough to exhaust the
-recursion limit, → `ApiError`; the decode error (whose `.doc` holds the body)
-is never chained as `__cause__`/`__context__`. `async_refresh` computes the
+first, then at most limit + 1 bytes; a larger 200 body → `ApiError`). The body
+is decoded with `payload.decode_json` (§6a): a body that is not UTF-8, nests
+deeper than `MAX_JSON_DEPTH`, holds an integer literal of more than
+`MAX_JSON_INT_DIGITS` digits or is not JSON → `ApiError` "invalid JSON"; no
+decode error (whose `.doc` holds the body) is chained as
+`__cause__`/`__context__`. A string `expires_in` is converted only when it has
+at most `MAX_JSON_INT_DIGITS` characters, so its result does not depend on the
+interpreter's `int_max_str_digits` setting either. `async_refresh` computes the
 new expiry before storing the access token, so the pair changes together.
 
 The refresh request runs in its own task (`asyncio.create_task`) that the
@@ -365,11 +371,12 @@ class SocialSchoolsClient:
         → InvalidAuth. 400/403/404/409/... → ApiError(status). 5xx, ClientError, TimeoutError,
         3xx → CannotConnect (3xx counts as connectivity problem; never followed). A 2xx body larger than
         MAX_API_BODY_BYTES (Content-Length first, then at most limit + 1 bytes read) → ApiError. The body
-        is decoded with payload.decode_json (invalid, non-UTF-8 or deeper than MAX_JSON_DEPTH → ApiError
-        "invalid JSON" without the body chained as __cause__/__context__); a top-level value whose type
-        is not in RESPONSE_SHAPES for the path → ApiError "unexpected JSON shape". A whitelisted path
-        without a RESPONSE_SHAPES entry → RequestNotAllowed, checked after the URL guard and before
-        any token or network access."""
+        is decoded with payload.decode_json (invalid, non-UTF-8, deeper than MAX_JSON_DEPTH or with an
+        integer literal over MAX_JSON_INT_DIGITS digits → ApiError "invalid JSON" without the body
+        chained as __cause__/__context__); a top-level value whose type is not in RESPONSE_SHAPES for
+        the path → ApiError "unexpected JSON shape". A whitelisted path without a RESPONSE_SHAPES
+        entry → RequestNotAllowed, checked after the URL guard and before any token or network
+        access."""
     @property
     def token_manager(self) -> TokenManager: ...                       # the manager given to __init__
     async def async_get_current_account(self) -> dict[str, Any]       # GET useraccounts/current (no school headers)
@@ -385,14 +392,16 @@ class SocialSchoolsClient:
 ```python
 async def async_read_limited(response, limit: int) -> bytes | None
     # Content-Length over the limit → None before reading; else at most limit + 1 bytes are read,
-    # None when the body is longer. login.py (HTML pages), tokens.py and client.py all use it.
+    # None when the body is longer. An absent or malformed Content-Length, or one longer than 640
+    # characters, is ignored. login.py (HTML pages), tokens.py and client.py all use it.
 def json_nesting_depth_exceeds(text: str, limit: int) -> bool
     # one linear pass, no recursion: '[' / '{' outside strings +1, ']' / '}' -1 (never below 0);
     # inside a string a backslash escapes the next character. Does not validate JSON.
 def decode_json(body: bytes, *, what: str, status: int | None, max_bytes: int,
                 max_depth: int = MAX_JSON_DEPTH) -> Any
     # len(body) > max_bytes → ApiError("<what>: response body too large", status);
-    # not UTF-8 (a BOM is tolerated), deeper than max_depth, or rejected by json.loads (ValueError,
+    # not UTF-8 (a BOM is tolerated), deeper than max_depth, an integer literal of more than
+    # MAX_JSON_INT_DIGITS digits (a minus sign not counted), or rejected by json.loads (ValueError,
     # RecursionError) → ApiError("<what>: invalid JSON", status), raised outside every except block
     # so no JSONDecodeError (.doc) or UnicodeDecodeError (.object) holding the body stays attached.
 ```
@@ -404,6 +413,18 @@ on every build. The scan costs about 2 ms for a 50 KB feed and stays linear up t
 the body cap (about 0.4 s for a hostile 8 MiB body). Only UTF-8 bodies are
 accepted (RFC 8259 §8.1): the body is decoded once and the scan and `json.loads`
 read the same text, whereas `json.loads` on bytes would also guess UTF-16/32.
+
+Integer literals go through a `parse_int` hook that refuses more than
+`MAX_JSON_INT_DIGITS` digits before converting. On its own, `json.loads` leaves
+that bound to the process-wide `int_max_str_digits` setting (4300 by default;
+`PYTHONINTMAXSTRDIGITS`, `-X int_max_str_digits` or any library calling
+`sys.set_int_max_str_digits` can change it, and at 0 there is no bound and the
+conversion cost grows quadratically: about 10 s for an 8 MiB literal). A non-zero
+setting is never below 640 (`sys.int_info.str_digits_check_threshold`), so `int`
+never refuses a literal the hook accepts: the outcome is the same under every
+setting. The hook costs about 0.2–0.3 s on a hostile 8 MiB body of small
+integers and nothing measurable on a real feed. Floats are not affected
+(their conversion is linear).
 
 ## 7. models.py and textutil.py (PURE)
 
@@ -459,6 +480,14 @@ a missing/invalid `end` → `start + 1 hour`; `end <= start` → `start + 1 hour
 `parse_post` and `parse_event` treat an `OverflowError` from a datetime
 conversion like `ValueError`, so `parse_posts_page` and `parse_events` skip
 such items instead of failing the whole page.
+
+Every text field the parse functions produce (names, titles, texts, locations,
+groups, attachment names) has its unpaired UTF-16 surrogates replaced by U+FFFD.
+A JSON escape such as `"\ud83d"` (half an emoji, for example after the server
+cut a text) decodes to a lone surrogate, which cannot be encoded as UTF-8:
+Home Assistant's JSON serialisation of states, attributes, device names and
+config entries, and the attribute byte budget of §10, would fail on it.
+`json.loads` joins an escaped pair into one character, which stays as it is.
 
 `textutil.py`:
 

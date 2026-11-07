@@ -698,7 +698,7 @@ async def test_too_deep_json_is_refused_without_json_loads(
     The object around the arrays adds one level, so ``depth`` arrays nest one too deep.
     """
 
-    def loads(_text: str) -> Any:
+    def loads(_text: str, **_kwargs: Any) -> Any:
         raise AssertionError("json.loads must not run for this body")
 
     monkeypatch.setattr(payload_module, "json", SimpleNamespace(loads=loads))

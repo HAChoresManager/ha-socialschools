@@ -13,10 +13,21 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
   begrenst en de nestdiepte (maximaal 64 niveaus) controleert met een lineaire scan vóór
   `json.loads`. De uitkomst hangt daardoor niet meer af van de recursiegrens of de stackgrootte
   van de Python-interpreter. Alleen UTF-8 wordt geaccepteerd.
+- Een geheel getal in een JSON-antwoord mag hoogstens 640 cijfers hebben; de decoder controleert
+  dat zelf, net als de lengte van een `expires_in` als tekst en van `Content-Length`. Ook deze
+  uitkomst (en de rekentijd) hangt daardoor niet meer af van de interpreterinstelling
+  `int_max_str_digits`.
 - De API-client controleert per endpoint de vorm van het antwoord: account, berichtenfeed en
   bericht moeten een JSON-object zijn, de agenda een lijst of object. Een ander antwoord geeft
   een fout ("unexpected JSON shape") in plaats van dat het wordt doorgegeven.
 - CI: de HACS-validatie wordt overgeslagen zolang de repository privé is.
+
+### Opgelost
+
+- Een half emoji-teken uit de API (een losse UTF-16-surrogaat, in het JSON-antwoord bijvoorbeeld
+  `\ud83d`) in een bericht, agenda-item, schoolnaam of weergavenaam wordt vervangen door het
+  vervangingsteken U+FFFD (`�`). Voorheen konden de sensoren dan niet worden bijgewerkt en kon
+  Home Assistant de toestand niet als JSON opslaan.
 
 ## [0.1.0] - 2026-11-04
 
@@ -56,6 +67,3 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
   aantallen, tekstlengtes en veldnamen afdrukt.
 - Testsuite met `pytest-homeassistant-custom-component` (uitsluitend synthetische gegevens) en
   CI met hassfest, HACS-validatie, ruff en pytest.
-
-[Unreleased]: https://github.com/HAChoresManager/ha-socialschools/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/HAChoresManager/ha-socialschools/releases/tag/v0.1.0

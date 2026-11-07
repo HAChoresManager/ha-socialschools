@@ -45,6 +45,12 @@ MAX_API_BODY_BYTES: Final = 8 * 1_048_576  # 8 MiB, API responses
 # outcome never depends on the interpreter's recursion limit or C stack size.  Real
 # responses nest about four levels deep.
 MAX_JSON_DEPTH: Final = 64
+# Longest integer literal (digits, a minus sign not counted) accepted in a JSON body.  Without
+# this bound json.loads defers to the process-wide int_max_str_digits setting (4300 by
+# default, 0 for unlimited with a conversion cost that grows quadratically).  A non-zero
+# setting is never below 640, so with at most 640 digits the outcome is the same on every
+# interpreter.  Real ids and counts have at most 20 digits.
+MAX_JSON_INT_DIGITS: Final = 640
 # Plain http is accepted only for these hosts (local test servers); any other host needs https.
 LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "::1", "localhost"})
 

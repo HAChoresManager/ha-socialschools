@@ -2,13 +2,16 @@
 
 The depth check must not depend on the interpreter: a too deeply nested body is refused
 by the linear scan before ``json.loads`` runs, which the tests prove by replacing
-``json.loads`` with a function that fails when called.  Secret-like values carry the
-``private-`` marker so that leaks into exception messages are caught.
+``json.loads`` with a function that fails when called.  Neither may the digit bounds:
+the tests that convert digits run under several process-wide ``int_max_str_digits``
+settings (the ``int_max_str_digits`` fixture of ``conftest.py``).  Secret-like values
+carry the ``private-`` marker so that leaks into exception messages are caught.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,7 +21,7 @@ import pytest
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.socialschools import payload as payload_module
-from custom_components.socialschools.const import MAX_JSON_DEPTH
+from custom_components.socialschools.const import MAX_JSON_DEPTH, MAX_JSON_INT_DIGITS
 from custom_components.socialschools.errors import ApiError
 from custom_components.socialschools.payload import (
     async_read_limited,
@@ -50,7 +53,7 @@ def nested_mixed(depth: int) -> str:
 def refuse_json_loads(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make any json.loads call from the payload module fail the test."""
 
-    def loads(_text: str) -> Any:
+    def loads(_text: str, **_kwargs: Any) -> Any:
         raise AssertionError("json.loads must not run for this body")
 
     monkeypatch.setattr(payload_module, "json", SimpleNamespace(loads=loads))
@@ -212,7 +215,7 @@ def test_utf8_byte_order_mark_is_tolerated() -> None:
 def test_recursion_error_from_json_loads_is_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     """Should json.loads still recurse too deep on some interpreter, that is invalid JSON too."""
 
-    def loads(_text: str) -> Any:
+    def loads(_text: str, **_kwargs: Any) -> Any:
         raise RecursionError("maximum recursion depth exceeded private-body")
 
     monkeypatch.setattr(payload_module, "json", SimpleNamespace(loads=loads))
@@ -221,10 +224,59 @@ def test_recursion_error_from_json_loads_is_invalid_json(monkeypatch: pytest.Mon
     assert_clean(excinfo.value, message="invalid JSON", status=200)
 
 
-def test_integer_with_too_many_digits_is_invalid_json() -> None:
-    """Python's limit on int digits raises ValueError, which maps to invalid JSON."""
+def test_digit_bound_is_below_every_interpreter_limit() -> None:
+    """``int`` consults int_max_str_digits only above this threshold, the lowest non-zero value.
+
+    So ``int`` never refuses a literal of at most MAX_JSON_INT_DIGITS digits, on any build.
+    """
+    assert sys.int_info.str_digits_check_threshold >= MAX_JSON_INT_DIGITS
+
+
+@pytest.mark.parametrize(
+    "literal",
+    ["9" * MAX_JSON_INT_DIGITS, "-" + "9" * MAX_JSON_INT_DIGITS],
+    ids=["positive", "negative"],
+)
+def test_integer_of_exactly_the_digit_bound_is_decoded(
+    int_max_str_digits: int, literal: str
+) -> None:
+    """MAX_JSON_INT_DIGITS digits (a minus sign not counted) decode under every setting."""
+    body = f'{{"values": [{literal}]}}'.encode()
+    assert decode_json(body, what=WHAT, status=200, max_bytes=LIMIT) == {"values": [int(literal)]}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"9" * (MAX_JSON_INT_DIGITS + 1),
+        b"[-" + b"9" * (MAX_JSON_INT_DIGITS + 1) + b"]",
+        b'{"id": ' + b"1" * 5000 + b"}",
+    ],
+    ids=["one-over", "negative-one-over", "5000-digits"],
+)
+def test_integer_with_too_many_digits_is_invalid_json(int_max_str_digits: int, body: bytes) -> None:
+    """More than MAX_JSON_INT_DIGITS digits is invalid JSON, whatever int_max_str_digits says.
+
+    Left to the setting, the answer would vary: 641 digits pass at the default 4300 but not
+    at 640, and at 0 any length passes, after a conversion whose cost grows quadratically.
+    """
     with pytest.raises(ApiError) as excinfo:
-        decode_json(b"1" * 5000, what=WHAT, status=200, max_bytes=10_000)
+        decode_json(body, what=WHAT, status=200, max_bytes=len(body))
+    assert_clean(excinfo.value, message="invalid JSON", status=200)
+
+
+def test_huge_integer_is_refused_before_it_is_converted(
+    monkeypatch: pytest.MonkeyPatch, int_max_str_digits: int
+) -> None:
+    """A million digits never reach ``int``, whose cost grows quadratically when unlimited."""
+
+    def refuse_int(*_args: Any) -> int:
+        raise AssertionError("int() must not run for this literal")
+
+    monkeypatch.setattr(payload_module, "int", refuse_int, raising=False)
+    body = b"[" + b"9" * 1_000_000 + b"]"
+    with pytest.raises(ApiError) as excinfo:
+        decode_json(body, what=WHAT, status=200, max_bytes=len(body))
     assert_clean(excinfo.value, message="invalid JSON", status=200)
 
 
@@ -316,10 +368,13 @@ class _FakeStream:
 
 
 @pytest.mark.parametrize("header", ["", "garbage", "9" * 5000], ids=["absent", "garbage", "huge"])
-async def test_unusable_content_length_falls_back_to_reading(header: str) -> None:
+async def test_unusable_content_length_falls_back_to_reading(
+    header: str, int_max_str_digits: int
+) -> None:
     """A missing or unparsable Content-Length is ignored; the stream is still bounded.
 
-    More than 4300 digits is a ValueError for int(), like any other malformed value.
+    More than 640 characters counts as malformed under every int_max_str_digits setting
+    (at 0, ``int`` would otherwise parse 5000 digits and refuse before reading).
     """
     stream = _FakeStream(b"x" * (10 * LIMIT), step=300)
     response = SimpleNamespace(headers={"Content-Length": header} if header else {}, content=stream)
@@ -328,7 +383,9 @@ async def test_unusable_content_length_falls_back_to_reading(header: str) -> Non
 
 
 @pytest.mark.parametrize("declared", [LIMIT + 1, 10**400], ids=["one-over", "absurd"])
-async def test_declared_length_over_the_limit_is_refused_without_reading(declared: int) -> None:
+async def test_declared_length_over_the_limit_is_refused_without_reading(
+    declared: int, int_max_str_digits: int
+) -> None:
     """A Content-Length over the limit is refused before a single byte is read."""
     stream = _FakeStream(b"x" * (LIMIT + 1), step=300)
     response = SimpleNamespace(headers={"Content-Length": str(declared)}, content=stream)

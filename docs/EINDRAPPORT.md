@@ -13,12 +13,12 @@ Datum: 2026-11-05. Repository: `ha-socialschools`, integratie
 - Testsuite: 769 tests, allemaal groen (`pytest`), `ruff check` schoon, de
   protocolmodules en de probe compileren onder Python 3.12.
 - hassfest en de HACS-validatie draaien in CI (`.github/workflows/validate.yml`).
-  In deze omgeving kon hassfest niet als geheel worden uitgevoerd; een
+  In de ontwikkelomgeving kon hassfest niet als geheel worden uitgevoerd; een
   deelcontrole (translations, config_flow, json) gaf 0 fouten. De
   HACS-`brands`-controle is bewust uitgezet (`ignore: brands`) omdat het
   Social Schools-logo niet van ons is om mee te leveren.
-- De probe is hier **niet live gedraaid** (geen inloggegevens in deze
-  omgeving). Zie "Probe" hieronder voor wat hij afdrukt en wat je ermee doet.
+- De probe is **niet live gedraaid** (geen inloggegevens in de
+  ontwikkelomgeving). Zie "Probe" hieronder voor wat hij afdrukt en wat je ermee doet.
 
 ## Entity-id's per school
 
@@ -121,7 +121,7 @@ standaardinstelling: 4 feed + 1 agenda (+ ca. 1 tokenverversing per account).
 
 ## Probe (`scripts/probe.py`)
 
-Niet gedraaid in deze omgeving. Draai hem vóór installatie vanuit de
+Niet gedraaid in de ontwikkelomgeving. Draai hem vóór installatie vanuit de
 repo-root op de machine waar de repository staat:
 
 ```sh
@@ -156,9 +156,8 @@ Wat je ermee doet:
 
 ## Aannames en open punten
 
-- GitHub-URL in `manifest.json`/README: `https://github.com/HAChoresManager/ha-socialschools`
-  (afgeleid van de GitHub-koppeling van deze sessie). Pas aan als de repo
-  elders komt.
+- GitHub-URL in `manifest.json`/README: `https://github.com/HAChoresManager/ha-socialschools`.
+  Pas aan als de repo elders komt.
 - Naïeve tijdstempels van de API (zonder tijdzone) worden als
   Europe/Amsterdam gelezen; de probe laat niet zien of de API `Z`/offsets
   gebruikt (alleen veldnamen). Klopt een agendatijd niet, dan zit het daar.

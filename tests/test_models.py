@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, date, datetime, timedelta, timezone
+import json
 import logging
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -30,6 +31,7 @@ from custom_components.socialschools.models import (
     parse_post,
     parse_posts_page,
 )
+from custom_components.socialschools.payload import decode_json
 
 TZ = ZoneInfo("Europe/Amsterdam")
 CET = timezone(timedelta(hours=1))
@@ -1105,6 +1107,88 @@ def test_overflowing_datetime_arithmetic_is_a_value_error(
     assert not isinstance(exc_info.value, OverflowError)
     assert exc_info.value.__cause__ is None
     assert parse_page() == []
+
+
+# --- unpaired surrogates ---------------------------------------------------------------------
+
+CUT = "a \ud83d b \udc00 c \udfff d \U0001f600"
+"""Text with unpaired surrogates (an emoji cut in half by the server) and one whole emoji."""
+CLEANED = "a \ufffd b \ufffd c \ufffd d \U0001f600"
+
+
+def from_api(data: Any) -> Any:
+    """Send ``data`` through JSON as the API does: non-ASCII as ``\\u`` escapes, pairs included.
+
+    ``json.dumps`` writes the lone surrogates as ``\\ud83d`` escapes and the whole emoji as an
+    escaped pair; decode_json turns them back into lone surrogates and one character.
+    """
+    body = json.dumps(data).encode("ascii")
+    return decode_json(body, what="test", status=200, max_bytes=len(body))
+
+
+def assert_utf8(*texts: str) -> None:
+    """Every text can be encoded as UTF-8, as Home Assistant's JSON serialisation requires."""
+    for text in texts:
+        text.encode("utf-8")
+
+
+def test_unpaired_surrogates_in_a_post_are_replaced() -> None:
+    """Every text field of a post replaces lone surrogates by U+FFFD and keeps whole emoji."""
+    page = from_api(
+        {
+            "values": [
+                post_json(
+                    title=CUT,
+                    body=f"<p>{CUT}</p>",
+                    author={"displayName": CUT},
+                    communities=[{"name": CUT}],
+                    media=[{"fileName": CUT}],
+                )
+            ]
+        }
+    )
+    assert "\ud83d" in page["values"][0]["title"]  # decode_json lets them through
+
+    (post,) = parse_posts_page(page)
+
+    assert (post.title, post.text, post.author) == (CLEANED, CLEANED, CLEANED)
+    assert post.groups == (CLEANED,)
+    assert post.attachments == (CLEANED,)
+    assert_utf8(post.title, post.text, post.author, *post.groups, *post.attachments)
+
+
+def test_unpaired_surrogates_in_an_event_are_replaced() -> None:
+    """Title, description, location and groups of an event are UTF-8 safe."""
+    data = from_api(
+        [
+            event_json(
+                title=CUT, description=f"<p>{CUT}</p>", location=CUT, communities=[{"name": CUT}]
+            )
+        ]
+    )
+
+    (event,) = parse_events(data, tz=TZ)
+
+    assert (event.title, event.description, event.location) == (CLEANED, CLEANED, CLEANED)
+    assert event.groups == (CLEANED,)
+    assert_utf8(event.title, event.description, event.location, *event.groups)
+
+
+def test_unpaired_surrogates_in_an_account_are_replaced() -> None:
+    """The display name (the entry title) and the school name (the device name) are UTF-8 safe."""
+    data = from_api(
+        {
+            "userProfileId": 1,
+            "displayName": CUT,
+            "roles": [{"id": 2, "type": 1, "school": {"id": 3, "displayName": CUT}}],
+        }
+    )
+
+    account = parse_account(data)
+
+    assert account.display_name == CLEANED
+    assert account.schools[0].name == CLEANED
+    assert_utf8(account.display_name, account.schools[0].name)
 
 
 # --- dataclasses ----------------------------------------------------------------------------
