@@ -10,9 +10,12 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
 ### Toegevoegd
 
 - MIT-licentie (`LICENSE`).
+- `SECURITY.md`: kwetsbaarheden melden via private vulnerability reporting van GitHub.
+- Dependabot werkt de GitHub Actions wekelijks bij (`.github/dependabot.yml`).
 
 ### Gewijzigd
 
+- CI: alle GitHub Actions zijn vastgepind op een commit-SHA, met de versie als commentaar.
 - JSON-antwoorden worden gedecodeerd met één gedeelde helper (`payload.py`) die de grootte
   begrenst en de nestdiepte (maximaal 64 niveaus) controleert met een lineaire scan vóór
   `json.loads`. De uitkomst hangt daardoor niet meer af van de recursiegrens of de stackgrootte
