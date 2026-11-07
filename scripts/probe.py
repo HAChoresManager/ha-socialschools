@@ -15,6 +15,15 @@ lengths and field names: never tokens, names, titles, bodies or URLs.
 
 ``--check`` only imports the pure modules through the stand-in package and prints
 ``ok``; the test suite uses it.
+
+Two opt-in investigations add a section after the normal output:
+
+* ``--agenda-vorm`` prints, for the calendar items of the coming 60 days, only
+  ``allDay``, the raw ``start`` and ``end`` strings and their time zone designator
+  (``Z``, an offset or none). No titles, descriptions or locations.
+* ``--kinderen-vorm`` prints the field names of the parent role and of its
+  ``connections[]`` (the children) in ``useraccounts/current``, and whether those
+  connections carry community ids that also occur on posts. No names or values.
 """
 
 from __future__ import annotations
@@ -42,6 +51,11 @@ MAX_MESSAGE_LENGTH = 200
 _URL_RE = re.compile(r"[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"\S+@\S+")
 _LONG_WORD_RE = re.compile(r"[A-Za-z0-9_\-]{24,}")
+_TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9:.]+)?(Z|[+-][0-9]{2}:?[0-9]{2})?")
+_TZ_DESIGNATOR_RE = re.compile(r"(Z|[+-][0-9]{2}:?[0-9]{2})$")
+_COMMUNITY_KEY_RE = re.compile(r"communit|group|klas|class", re.IGNORECASE)
+AGENDA_WINDOW = timedelta(days=60)
+MAX_FIELD_DEPTH = 3
 
 
 def load_modules() -> dict[str, types.ModuleType]:
@@ -107,6 +121,127 @@ def describe_post(post: Mapping[str, Any], textutil: types.ModuleType) -> None:
     print(f"Body is HTML: {ja_nee(is_html)}")
 
 
+def raw_timestamp(value: Any) -> str:
+    """Return ``value`` when it is an ISO-like timestamp string; otherwise only its type."""
+    if isinstance(value, str) and _TIMESTAMP_RE.fullmatch(value.strip()):
+        return value.strip()
+    return f"<{type(value).__name__}>"
+
+
+def tz_designator(value: Any) -> str:
+    """Return the time zone designator of a timestamp string: ``Z``, an offset or ``geen``."""
+    if not isinstance(value, str) or not _TIMESTAMP_RE.fullmatch(value.strip()):
+        return "onbekend"
+    match = _TZ_DESIGNATOR_RE.search(value.strip())
+    return match.group(1) if match else "geen"
+
+
+def describe_agenda(items: list[Any]) -> None:
+    """Print allDay and the raw start/end of every calendar item; never titles or other text."""
+    print(f"Agenda-vorm: {len(items)} items in de komende {AGENDA_WINDOW.days} dagen")
+    for item in items:
+        if not isinstance(item, Mapping):
+            print("  (geen object)")
+            continue
+        all_day = item.get("allDay")
+        all_day_text = (
+            ja_nee(all_day) if isinstance(all_day, bool) else f"<{type(all_day).__name__}>"
+        )
+        start, end = item.get("start"), item.get("end")
+        print(
+            f"  allDay={all_day_text}"
+            f"  start={raw_timestamp(start)} (tijdzone: {tz_designator(start)})"
+            f"  end={raw_timestamp(end)} (tijdzone: {tz_designator(end)})"
+        )
+
+
+def type_name(value: Any) -> str:
+    """Return a short JSON type name for a value (never the value itself)."""
+    if isinstance(value, bool):
+        return "bool"
+    return {dict: "object", list: "list", str: "str", int: "int", float: "float"}.get(
+        type(value), "null" if value is None else type(value).__name__
+    )
+
+
+def print_field_tree(value: Any, label: str, depth: int = 0) -> None:
+    """Print the key names and value types of an object and its nested objects (no values)."""
+    if isinstance(value, list):
+        value = first_item(value)
+        label = f"{label}[0]"
+    if not isinstance(value, Mapping) or depth > MAX_FIELD_DEPTH:
+        return
+    fields = ", ".join(f"{key} ({type_name(item)})" for key, item in sorted(value.items()))
+    print(f"Velden van {label}: {fields or '(leeg)'}")
+    for key, item in sorted(value.items()):
+        if isinstance(item, Mapping) or (
+            isinstance(item, list) and isinstance(first_item(item), Mapping)
+        ):
+            print_field_tree(item, f"{label}.{key}", depth + 1)
+
+
+def community_ids(value: Any, *, inside: bool = False, path: str = "") -> tuple[set[int], set[str]]:
+    """Collect integer ids found under community/group-like keys, with the key paths."""
+    ids: set[int] = set()
+    paths: set[str] = set()
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            matched = inside or bool(_COMMUNITY_KEY_RE.search(str(key)))
+            child = f"{path}.{key}" if path else str(key)
+            if matched and isinstance(item, int) and not isinstance(item, bool):
+                if inside and key != "id":
+                    continue
+                ids.add(item)
+                paths.add(child)
+            elif isinstance(item, Mapping | list):
+                found, where = community_ids(item, inside=matched, path=child)
+                ids |= found
+                paths |= where
+    elif isinstance(value, list):
+        for item in value:
+            if inside and isinstance(item, int) and not isinstance(item, bool):
+                ids.add(item)
+                paths.add(f"{path}[]")
+            else:
+                found, where = community_ids(item, inside=inside, path=f"{path}[]")
+                ids |= found
+                paths |= where
+    return ids, paths
+
+
+def describe_children(account: Mapping[str, Any], posts: list[Any], parent_role: int) -> None:
+    """Print the shape of the parent role and its connections, and community-id overlap."""
+    roles = [
+        role
+        for role in account.get("roles") or []
+        if isinstance(role, Mapping) and role.get("type") == parent_role
+    ]
+    print(f"Kinderen-vorm: {len(roles)} ouderrol(len)")
+    if not roles:
+        return
+    counts = [len(role.get("connections") or []) for role in roles]
+    print(f"Aantal connections per ouderrol: {', '.join(str(count) for count in counts)}")
+    print_field_tree(roles[0], "roles[0]")
+    connections = [item for role in roles for item in role.get("connections") or []]
+    ids, paths = community_ids(connections)
+    print(f"Community-id's in connections: {ja_nee(bool(ids))}")
+    if paths:
+        print(f"Gevonden onder: {', '.join(sorted(paths))}")
+    post_ids: set[int] = set()
+    post_group_ids: set[int] = set()
+    for post in posts:
+        for community in (post.get("communities") or []) if isinstance(post, Mapping) else []:
+            if isinstance(community, Mapping):
+                if isinstance(community.get("id"), int):
+                    post_ids.add(community["id"])
+                if isinstance(community.get("groupId"), int):
+                    post_group_ids.add(community["groupId"])
+    if not ids:
+        return
+    print(f"Overlap met communities[].id van berichten: {ja_nee(bool(ids & post_ids))}")
+    print(f"Overlap met communities[].groupId van berichten: {ja_nee(bool(ids & post_group_ids))}")
+
+
 async def async_compare_detail(api: Any, school_id: int, post: Mapping[str, Any]) -> None:
     """Fetch the detail of ``post`` and compare the body lengths (lengths only, never content)."""
     post_id = post.get("id")
@@ -127,9 +262,13 @@ async def async_probe_api(
     textutil: types.ModuleType,
     lookback: timedelta,
     horizon: timedelta,
+    parent_role: int,
+    agenda_vorm: bool = False,
+    kinderen_vorm: bool = False,
 ) -> None:
     """Run the four whitelisted GET calls for the first parent school and describe the shapes."""
-    account = models.parse_account(await api.async_get_current_account())
+    raw_account = await api.async_get_current_account()
+    account = models.parse_account(raw_account)
     print(f"Ouderrollen/scholen: {len(account.schools)}")
     if not account.schools:
         return
@@ -150,6 +289,13 @@ async def async_probe_api(
     event_fields = field_names(event) if event is not None else "geen events in venster"
     print(f"Velden van een event: {event_fields}")
     print(f"Aantal events in venster: {len(items)}")
+    if agenda_vorm:
+        upcoming = await api.async_get_events(school_id, now, now + AGENDA_WINDOW)
+        upcoming_items = upcoming.get("values") if isinstance(upcoming, Mapping) else upcoming
+        describe_agenda(upcoming_items if isinstance(upcoming_items, list) else [])
+    if kinderen_vorm:
+        posts = feed.get("values") if isinstance(feed, Mapping) else None
+        describe_children(raw_account, posts if isinstance(posts, list) else [], parent_role)
 
 
 async def async_check_refresh(manager: Any, error_type: type[Exception]) -> None:
@@ -167,7 +313,12 @@ async def async_check_refresh(manager: Any, error_type: type[Exception]) -> None
 
 
 async def async_probe(
-    modules: Mapping[str, types.ModuleType], username: str, password: str
+    modules: Mapping[str, types.ModuleType],
+    username: str,
+    password: str,
+    *,
+    agenda_vorm: bool = False,
+    kinderen_vorm: bool = False,
 ) -> None:
     """Sign in, exchange the code, refresh once and exercise the read-only API."""
     const = modules["const"]
@@ -199,11 +350,14 @@ async def async_probe(
             textutil=modules["textutil"],
             lookback=timedelta(days=const.CALENDAR_LOOKBACK_DAYS),
             horizon=timedelta(days=const.DEFAULT_CALENDAR_DAYS),
+            parent_role=const.ROLE_TYPE_PARENT,
+            agenda_vorm=agenda_vorm,
+            kinderen_vorm=kinderen_vorm,
         )
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    """Parse the command line: the only option is ``--check``; credentials are prompted for."""
+    """Parse the command line; credentials are always prompted for, never options."""
     parser = argparse.ArgumentParser(
         description=(
             "Live protocol check for Social Schools: asks for e-mail and password, "
@@ -214,6 +368,16 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--check",
         action="store_true",
         help="only import the pure modules through the stand-in package, print 'ok' and exit",
+    )
+    parser.add_argument(
+        "--agenda-vorm",
+        action="store_true",
+        help="also print allDay and the raw start/end of the calendar items of the coming 60 days",
+    )
+    parser.add_argument(
+        "--kinderen-vorm",
+        action="store_true",
+        help="also print the field names of the children (connections) and community-id overlap",
     )
     return parser.parse_args(argv)
 
@@ -227,7 +391,13 @@ def main(argv: list[str] | None = None) -> int:
             print("ok")
             return 0
         asyncio.run(
-            async_probe(modules, input("E-mailadres: ").strip(), getpass.getpass("Wachtwoord: "))
+            async_probe(
+                modules,
+                input("E-mailadres: ").strip(),
+                getpass.getpass("Wachtwoord: "),
+                agenda_vorm=args.agenda_vorm,
+                kinderen_vorm=args.kinderen_vorm,
+            )
         )
     except (Exception, KeyboardInterrupt) as err:
         message = sanitise(str(err))

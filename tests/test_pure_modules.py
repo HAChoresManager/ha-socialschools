@@ -23,7 +23,18 @@ import pytest
 from custom_components.socialschools.const import DOMAIN, VERSION
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "socialschools"
-PURE_MODULES = ("const", "errors", "payload", "login", "tokens", "client", "models", "textutil")
+PURE_MODULES = (
+    "const",
+    "errors",
+    "payload",
+    "login",
+    "tokens",
+    "client",
+    "models",
+    "textutil",
+    "reading",
+    "children",
+)
 ALLOWED_THIRD_PARTY = frozenset({"aiohttp", "yarl", "multidict"})
 PYTHON_312 = Path("/usr/bin/python3.12")
 SUBPROCESS_TIMEOUT = 120  # seconds

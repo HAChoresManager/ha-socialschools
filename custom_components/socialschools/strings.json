@@ -44,14 +44,21 @@
         "data": {
           "posts_interval": "Update interval",
           "calendar_days": "Calendar horizon",
-          "posts_in_list": "Posts in the list attribute"
+          "posts_in_list": "Posts in the list attribute",
+          "lezers": "Readers",
+          "kinderen": "Children and groups"
         },
         "data_description": {
           "posts_interval": "How often Home Assistant checks Social Schools for new posts, in minutes.",
           "calendar_days": "Number of days ahead for which calendar events are fetched.",
-          "posts_in_list": "Number of posts kept in the list attribute of the posts sensor."
+          "posts_in_list": "Number of posts kept in the list attribute of the posts sensor.",
+          "lezers": "Persons who must have read a post before it is no longer new. Read marks stay in Home Assistant and are never sent to Social Schools.",
+          "kinderen": "One line per child, such as Noud=6A. Separate several groups with a comma. Group names must match exactly; case is ignored."
         }
       }
+    },
+    "error": {
+      "invalid_children": "Every line must look like Name=group, group"
     }
   },
   "entity": {
@@ -61,6 +68,12 @@
       },
       "post_count": {
         "name": "Posts"
+      },
+      "unread": {
+        "name": "Unread"
+      },
+      "open_post": {
+        "name": "Opened post"
       }
     },
     "event": {
@@ -84,6 +97,61 @@
   "exceptions": {
     "no_parent_role": {
       "message": "The Social Schools account has no parent role at any school"
+    },
+    "choose_person": {
+      "message": "Choose who read the post"
+    },
+    "not_a_reader": {
+      "message": "{person} is not one of the readers of this integration"
+    },
+    "unknown_post": {
+      "message": "Post {post_id} is not in the current feed"
+    },
+    "open_failed": {
+      "message": "Post {post_id} could not be opened; the previous post is still shown"
+    },
+    "not_loaded": {
+      "message": "Social Schools is not loaded"
+    }
+  },
+  "services": {
+    "markeer_gelezen": {
+      "name": "Mark as read",
+      "description": "Marks a post as read (or unread) by a person. This stays in Home Assistant; nothing is sent to Social Schools.",
+      "fields": {
+        "post_id": {
+          "name": "Post ID",
+          "description": "The ID of a post in the current feed."
+        },
+        "persoon": {
+          "name": "Person",
+          "description": "Who read the post. Leave empty to use the person of the user who calls the action."
+        },
+        "gelezen": {
+          "name": "Read",
+          "description": "Turn off to remove the read mark again."
+        }
+      }
+    },
+    "markeer_alles_gelezen": {
+      "name": "Mark all as read",
+      "description": "Marks every post in the feed as read by a person. This stays in Home Assistant.",
+      "fields": {
+        "persoon": {
+          "name": "Person",
+          "description": "Who read the posts. Leave empty to use the person of the user who calls the action."
+        }
+      }
+    },
+    "open_bericht": {
+      "name": "Open post",
+      "description": "Shows the full text of a post from the feed in the opened post sensor. Opening marks nothing as read.",
+      "fields": {
+        "post_id": {
+          "name": "Post ID",
+          "description": "The ID of a post in the current feed."
+        }
+      }
     }
   }
 }

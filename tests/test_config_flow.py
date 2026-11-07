@@ -38,8 +38,11 @@ from custom_components.socialschools.const import (
     MIN_POSTS_INTERVAL,
     OIDC_CLIENT_ID,
     OPT_CALENDAR_DAYS,
+    OPT_CHILDREN,
     OPT_POSTS_IN_LIST,
     OPT_POSTS_INTERVAL,
+    OPT_READERS,
+    VERSION,
 )
 from custom_components.socialschools.errors import (
     ApiError,
@@ -62,6 +65,8 @@ ENTRY_DATA = {
 }
 NEW_TOKENS = TokenResponse("private-access-new", "private-refresh-new", 3600)
 VALID_OPTIONS = {OPT_POSTS_INTERVAL: 20, OPT_CALENDAR_DAYS: 30, OPT_POSTS_IN_LIST: 5}
+# What the flow stores for VALID_OPTIONS: no readers and no children configured.
+STORED_OPTIONS = {**VALID_OPTIONS, OPT_READERS: [], OPT_CHILDREN: ""}
 
 FLOW_MODULE = "custom_components.socialschools.config_flow"
 
@@ -129,7 +134,7 @@ async def test_user_flow_creates_entry(
     # The flow fetched the account with the exchanged access token, without a refresh first.
     (_, _, headers), *_ = api_state.requests_for(ACCOUNT_PATH)
     assert headers["Authorization"] == "Bearer private-access"
-    assert headers["User-Agent"] == "HomeAssistant-SocialSchools/0.1.0"
+    assert headers["User-Agent"] == f"HomeAssistant-SocialSchools/{VERSION}"
 
 
 async def test_user_flow_title_falls_back_to_username(
@@ -476,9 +481,9 @@ async def test_options_flow_stores_integers_and_reloads(
     result = await hass.config_entries.options.async_configure(result["flow_id"], VALID_OPTIONS)
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == VALID_OPTIONS
-    assert init_integration.options == VALID_OPTIONS
-    assert all(type(value) is int for value in init_integration.options.values())
+    assert result["data"] == STORED_OPTIONS
+    assert init_integration.options == STORED_OPTIONS
+    assert all(type(init_integration.options[key]) is int for key in VALID_OPTIONS)
     assert init_integration.state is ConfigEntryState.LOADED
     assert init_integration.runtime_data.update_interval == timedelta(minutes=20)
 
@@ -509,4 +514,47 @@ async def test_options_flow_rejects_values_out_of_range(
     result = await hass.config_entries.options.async_configure(result["flow_id"], VALID_OPTIONS)
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert init_integration.options == VALID_OPTIONS
+    assert init_integration.options == STORED_OPTIONS
+
+
+async def test_options_flow_stores_readers_and_children(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """Readers are stored as a de-duplicated list of person ids, children as the text."""
+    hass.states.async_set("person.ouder_een", "home")
+    hass.states.async_set("person.ouder_twee", "home")
+    result = await hass.config_entries.options.async_init(init_integration.entry_id)
+    readers = _selector(result, OPT_READERS).config
+    assert readers["domain"] == ["person"]
+    assert readers["multiple"] is True
+    assert _selector(result, OPT_CHILDREN).config["multiline"] is True
+    user_input = {
+        **VALID_OPTIONS,
+        OPT_READERS: ["person.ouder_een", "person.ouder_twee"],
+        OPT_CHILDREN: "Kind Een=6A\nKind Twee=1/2A, 1/2B\n",
+    }
+    result = await hass.config_entries.options.async_configure(result["flow_id"], user_input)
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert init_integration.options == {
+        **VALID_OPTIONS,
+        OPT_READERS: ["person.ouder_een", "person.ouder_twee"],
+        OPT_CHILDREN: "Kind Een=6A\nKind Twee=1/2A, 1/2B",
+    }
+    coordinator = init_integration.runtime_data
+    assert coordinator.readers == ["person.ouder_een", "person.ouder_twee"]
+    assert [child.name for child in coordinator.children] == ["Kind Een", "Kind Twee"]
+
+
+async def test_options_flow_rejects_unusable_children(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """A line without ``Naam=groep`` shows an error and keeps what was typed."""
+    result = await hass.config_entries.options.async_init(init_integration.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {**VALID_OPTIONS, OPT_CHILDREN: "Kind Een 6A"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {OPT_CHILDREN: "invalid_children"}
+    assert _suggested_value(result, OPT_CHILDREN) == "Kind Een 6A"
+    assert init_integration.options == {}

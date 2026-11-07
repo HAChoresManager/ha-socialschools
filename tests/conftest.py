@@ -178,6 +178,7 @@ class ApiState:
     posts_status: int = 200
     posts_status_queue: list[int] = field(default_factory=list)  # one-off statuses, used first
     events_status: int = 200
+    post_detail_status: int = 200  # status of communityposts/{id}
     account_status: int = 200
     account_status_queue: list[int] = field(default_factory=list)  # one-off statuses, used first
     token_status: int = 200
@@ -279,7 +280,8 @@ def mock_api(aioclient_mock: AiohttpClientMocker, api_state: ApiState) -> Aiohtt
         detail = api_state.post_details.get(post_id) or next(
             (post for post in api_state.posts if post["id"] == post_id), None
         )
-        return _reply(method, url, 200 if detail else 404, detail)
+        status = api_state.post_detail_status if detail else 404
+        return _reply(method, url, status, detail)
 
     async def _events(method: str, url: URL, data: Any) -> AiohttpClientMockResponse:
         _log(method, url)

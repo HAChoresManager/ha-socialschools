@@ -830,3 +830,56 @@ citations taken during development).
   `entry.add_to_hass(hass)`, `await hass.config_entries.async_setup(entry.entry_id)`.
   Reauth: `await entry.start_reauth_flow(hass)`. Every test must leave no
   lingering timers (the coordinator's are cancelled on unload automatically).
+
+## 16. Version 0.2: local read marks, opened post, children
+
+New pure modules (HA-free, Python 3.12, listed in the purity tests and the CI
+compile step):
+
+* `reading.py` — `ReadState`: per school `{post_id: {person entity ids}}` plus the
+  set of readers that have been seeded. `sync(school_id, readers, feed_ids)`
+  seeds readers not seen before with every post in the feed, forgets removed
+  readers (and their marks) and keeps marks only for feed posts plus the
+  `READ_MARKS_MARGIN` (30) newest other ids. `mark(school_id, post_ids, person,
+  read)`, `read_by`, `unread_by(school_id, post_id, readers)`.
+* `children.py` — `parse_children(text)` reads the `kinderen` option (one line
+  per child, `Naam=groep, groep`; ValueError with the line number otherwise),
+  `children_for(groups, children)` matches group names exactly after collapsing
+  whitespace and case folding, `is_schoolwide(groups, children)` is True for more
+  than `SCHOOLWIDE_GROUP_THRESHOLD` (3) groups or when no child matches.
+
+"Read" is local bookkeeping only. Nothing about it is sent to Social Schools:
+no new whitelist paths, no statistics or read-receipt calls. The store goes to
+version 2 (`SocialSchoolsStore._async_migrate_func` adds empty `read` and
+`readers` per school); with no seeded readers after the migration, the first
+refresh marks the feed as read for every reader.
+
+Options: `lezers` (person entity ids, EntitySelector multiple) and `kinderen`
+(multiline text, validated in the options flow: `invalid_children`).
+
+Actions (registered in `async_setup`, `CONFIG_SCHEMA` is config-entry only):
+
+| action | fields | behaviour |
+|---|---|---|
+| `markeer_gelezen` | `post_id` (int, required), `persoon` (person entity), `gelezen` (bool, default true) | marks one feed post for one person |
+| `markeer_alles_gelezen` | `persoon` | marks every feed post of every entry where the person is a reader |
+| `open_bericht` | `post_id` (int, required) | `GET communityposts/{id}` (LRU cache of `OPEN_POST_CACHE_SIZE` = 20 per entry), shown by the opened-post sensor |
+
+Without `persoon` the person is the `person` state whose `user_id` attribute is
+`call.context.user_id`. Errors are `ServiceValidationError` with translation
+keys `choose_person`, `not_a_reader` (`{person}`), `unknown_post` (`{post_id}`),
+`not_loaded`; a failed fetch is `HomeAssistantError` `open_failed` and keeps the
+previous post. Marking and opening send the dispatcher signal
+`socialschools_local_update_{entry_id}`; `LocalUpdatesEntity` subclasses (post
+list, unread, opened post) write their state on it, without an API request and
+without touching the new-post event entity.
+
+Entities: sensor `unread` (count; `eerste`, `per_persoon`) and sensor
+`open_post` (title; `post_id`, `groep`, `kinderen`, `schoolbreed`, `auteur`,
+`geplaatst`, `tekst` ≤ `MAX_OPEN_TEXT_LENGTH` (8000) and cut further by a
+binary search to stay within `ATTRIBUTES_BYTE_BUDGET`, `afgekapt`, `bijlagen`,
+`reacties`, `gelezen_door`, `nog_lezen`, `url`; `tekst` and `bijlagen`
+unrecorded). `post_summary` adds `kinderen`, `schoolbreed` and `url`
+(`POST_URL_TEMPLATE`, the web app route `/communityposts/:postId`); the post list
+adds `gelezen_door`, `nog_lezen`, `nieuw`.
+

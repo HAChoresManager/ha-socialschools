@@ -3,11 +3,14 @@
 One coordinator per config entry polls the feed of every school of the
 account, refreshes each school calendar once an hour and detects new posts
 with a small bookkeeping record per school (``high_water`` and ``seen_ids``)
-that is persisted in a private :class:`Store`.
+that is persisted in a private :class:`Store`.  The same store keeps the local
+read marks per person (``read``/``readers``, storage version 2); those are
+bookkeeping inside Home Assistant only and are never sent to Social Schools.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 import logging
@@ -16,10 +19,12 @@ from zoneinfo import ZoneInfo
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from .children import Child, parse_children
 from .client import SocialSchoolsClient
 from .const import (
     CALENDAR_LOOKBACK_DAYS,
@@ -34,13 +39,18 @@ from .const import (
     MIN_CALENDAR_DAYS,
     MIN_POSTS_INTERVAL,
     NEW_POST_GRACE,
+    OPEN_POST_CACHE_SIZE,
     OPT_CALENDAR_DAYS,
+    OPT_CHILDREN,
     OPT_POSTS_INTERVAL,
+    OPT_READERS,
     SCHOOL_TIMEZONE,
     SEEN_IDS_LIMIT,
+    SIGNAL_LOCAL_UPDATE,
 )
 from .errors import ApiError, CannotConnect, InvalidAuth
 from .models import Account, Post, School, SchoolEvent, parse_events, parse_post, parse_posts_page
+from .reading import ReadState
 
 if TYPE_CHECKING:
     from . import SocialSchoolsConfigEntry
@@ -50,6 +60,29 @@ _LOGGER = logging.getLogger(__name__)
 _STORE_SCHOOLS = "schools"
 _STORE_HIGH_WATER = "high_water"
 _STORE_SEEN_IDS = "seen_ids"
+
+
+class SocialSchoolsStore(Store[dict[str, Any]]):
+    """The private store of one entry; migrates version 1 (no read marks) to 2."""
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: Any
+    ) -> dict[str, Any]:
+        """Version 1 had only the new-post bookkeeping: add empty read marks per school.
+
+        No reader is recorded as seeded, so the first refresh after the upgrade marks
+        every post in the feed as read by every configured reader.
+        """
+        if old_major_version != 1:
+            raise NotImplementedError
+        data = old_data if isinstance(old_data, dict) else {}
+        schools = data.get(_STORE_SCHOOLS)
+        if isinstance(schools, dict):
+            for record in schools.values():
+                if isinstance(record, dict):
+                    record.setdefault("read", {})
+                    record.setdefault("readers", [])
+        return data
 
 
 @dataclass
@@ -132,6 +165,69 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
         self._trackers = {school.id: _SchoolTracker() for school in account.schools}
         self._detail_cache: dict[int, str] = {}
         self._tz = ZoneInfo(SCHOOL_TIMEZONE)
+        self.read_state = ReadState()
+        self.children: tuple[Child, ...] = _children_option(entry.options.get(OPT_CHILDREN, ""))
+        self.opened: dict[int, Post] = {}  # per school: the post shown by the opened-post sensor
+        self._open_cache: OrderedDict[tuple[int, int], Post] = OrderedDict()
+
+    @property
+    def readers(self) -> list[str]:
+        """Return the person entity ids that must have read a post, in option order."""
+        value = self.config_entry.options.get(OPT_READERS, [])
+        if not isinstance(value, list):
+            return []
+        return list(dict.fromkeys(item for item in value if isinstance(item, str)))
+
+    @property
+    def local_update_signal(self) -> str:
+        """Return the dispatcher signal sent when read marks or the opened post change."""
+        return SIGNAL_LOCAL_UPDATE.format(entry_id=self.config_entry.entry_id)
+
+    def find_post(self, post_id: int) -> tuple[School, Post] | None:
+        """Return the school and the feed post with ``post_id``, if the current feed has it."""
+        if self.data is None:
+            return None
+        for school_data in self.data.schools.values():
+            for post in school_data.posts:
+                if post.id == post_id:
+                    return school_data.school, post
+        return None
+
+    async def async_mark_read(
+        self, school_id: int, post_ids: list[int], person: str, read: bool
+    ) -> None:
+        """Change local read marks, persist them and update the entities (no API request)."""
+        if self.read_state.mark(school_id, post_ids, person, read):
+            await self._store.async_save(self._store_payload())
+        async_dispatcher_send(self.hass, self.local_update_signal)
+
+    async def async_open_post(self, school: School, post_id: int) -> Post:
+        """Show the full post ``post_id`` in the opened-post sensor and return it.
+
+        The detail comes from ``GET communityposts/{id}`` (already whitelisted) and is
+        kept in a small in-memory cache, so opening it again costs no request.
+        Raises CannotConnect, ApiError, InvalidAuth or ValueError; the previously
+        opened post then stays.
+        """
+        key = (school.id, post_id)
+        post = self._open_cache.get(key)
+        if post is None:
+            post = parse_post(await self.client.async_get_post(school.id, post_id))
+            if post.id != post_id:
+                raise ValueError("the detail belongs to another post")
+            self._open_cache[key] = post
+            while len(self._open_cache) > OPEN_POST_CACHE_SIZE:
+                self._open_cache.popitem(last=False)
+        else:
+            self._open_cache.move_to_end(key)
+        self.opened[school.id] = post
+        async_dispatcher_send(self.hass, self.local_update_signal)
+        return post
+
+    @property
+    def open_cache_size(self) -> int:
+        """Return how many post details are cached (for diagnostics)."""
+        return len(self._open_cache)
 
     async def async_load_store(self) -> None:
         """Load the bookkeeping of an earlier run; called once before the first refresh."""
@@ -147,6 +243,7 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
             seen_ids = record.get(_STORE_SEEN_IDS)
             if isinstance(seen_ids, list):
                 tracker.seen_ids = [value for value in seen_ids if isinstance(value, int)]
+            self.read_state.load_school(school_id, record)
 
     async def _async_update_data(self) -> SocialSchoolsData:
         """Fetch every feed, refresh the calendars that are due and detect new posts."""
@@ -172,7 +269,10 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
         for school in self.account.schools:
             posts, events, events_fetched_at = fetched[school.id]
             new_posts, changed = self._detect_new_posts(school.id, posts)
-            store_changed = store_changed or changed
+            read_changed = self.read_state.sync(
+                school.id, self.readers, [post.id for post in posts]
+            )
+            store_changed = store_changed or changed or read_changed
             schools[school.id] = SchoolData(
                 school=school,
                 posts=posts,
@@ -314,7 +414,19 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
                         None if tracker.high_water is None else tracker.high_water.isoformat()
                     ),
                     _STORE_SEEN_IDS: list(tracker.seen_ids),
+                    **self.read_state.school_payload(school_id),
                 }
                 for school_id, tracker in self._trackers.items()
             }
         }
+
+
+def _children_option(value: Any) -> tuple[Child, ...]:
+    """Parse the ``kinderen`` option; an unusable value (validated in the flow) counts as empty."""
+    if not isinstance(value, str):
+        return ()
+    try:
+        return parse_children(value)
+    except ValueError:
+        _LOGGER.warning("The children option is not valid and is ignored")
+        return ()

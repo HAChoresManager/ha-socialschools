@@ -17,8 +17,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.socialschools.const import (
     EVENT_TYPE_NEW_POST,
     OPT_CALENDAR_DAYS,
+    OPT_CHILDREN,
     OPT_POSTS_IN_LIST,
     OPT_POSTS_INTERVAL,
+    OPT_READERS,
 )
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "socialschools"
@@ -35,6 +37,8 @@ ENTITY_NAMES = {
     "sensor": {
         "latest_post": ("Latest post", "Laatste bericht"),
         "post_count": ("Posts", "Berichten"),
+        "unread": ("Unread", "Ongelezen"),
+        "open_post": ("Opened post", "Geopend bericht"),
     },
     "event": {"new_post": ("New post", "Nieuw bericht")},
     "calendar": {"calendar": ("Calendar", "Agenda")},
@@ -153,7 +157,7 @@ def test_user_step_fields(strings: dict[str, Any]) -> None:
 def test_options_keys_match_const(strings: dict[str, Any]) -> None:
     """The options form translates exactly the option keys of const.py, each described."""
     step = strings["options"]["step"]["init"]
-    expected = {OPT_POSTS_INTERVAL, OPT_CALENDAR_DAYS, OPT_POSTS_IN_LIST}
+    expected = {OPT_POSTS_INTERVAL, OPT_CALENDAR_DAYS, OPT_POSTS_IN_LIST, OPT_READERS, OPT_CHILDREN}
     assert set(step["data"]) == expected
     assert set(step["data_description"]) == expected
 
@@ -181,11 +185,51 @@ def test_translation_keys_are_valid(strings: dict[str, Any]) -> None:
         assert TRANSLATION_KEY_RE.match(path[-1]), path
 
 
+EXCEPTION_KEYS = {
+    "no_parent_role",
+    "choose_person",
+    "not_a_reader",
+    "unknown_post",
+    "open_failed",
+    "not_loaded",
+}
+
+
 def test_exception_message(strings: dict[str, Any], dutch: dict[str, Any]) -> None:
-    """The no_parent_role setup error has a translated message."""
+    """Every error raised with a translation key has a message in both languages."""
     for data in (strings, dutch):
-        assert set(data["exceptions"]) == {"no_parent_role"}
-        assert set(data["exceptions"]["no_parent_role"]) == {"message"}
+        assert set(data["exceptions"]) == EXCEPTION_KEYS
+        for key in EXCEPTION_KEYS:
+            assert set(data["exceptions"][key]) == {"message"}
+    assert dutch["exceptions"]["choose_person"]["message"] == "Kies wie het bericht gelezen heeft"
+
+
+def test_exception_keys_used_in_code_are_translated(strings: dict[str, Any]) -> None:
+    """Every translation_key / _error key in the Python code exists under exceptions."""
+    used: set[str] = set()
+    for path in PACKAGE_DIR.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        used |= set(re.findall(r'translation_key="([a-z_]+)"', source))
+        used |= set(re.findall(r'_error\("([a-z_]+)"', source))
+    used -= set(ENTITY_NAMES["sensor"]) | {"calendar", "new_post"}
+    assert used <= set(strings["exceptions"]), used - set(strings["exceptions"])
+
+
+def test_services_are_translated(strings: dict[str, Any], dutch: dict[str, Any]) -> None:
+    """Every action in services.yaml has a name, a description and named fields in both languages."""
+    services = {
+        "markeer_gelezen": {"post_id", "persoon", "gelezen"},
+        "markeer_alles_gelezen": {"persoon"},
+        "open_bericht": {"post_id"},
+    }
+    for data in (strings, dutch):
+        assert set(data["services"]) == set(services)
+        for service, fields in services.items():
+            assert data["services"][service]["name"]
+            assert data["services"][service]["description"]
+            assert set(data["services"][service]["fields"]) == fields
+            for field in fields:
+                assert set(data["services"][service]["fields"][field]) == {"name", "description"}
 
 
 def _entity_keys(platform: str) -> set[str]:

@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "socialschools"
-VERSION: Final = "0.1.0"  # keep equal to manifest.json "version" (checked by a test)
+VERSION: Final = "0.2.0"  # keep equal to manifest.json "version" (checked by a test)
 USER_AGENT: Final = f"HomeAssistant-SocialSchools/{VERSION}"
 
 # --- OpenID Connect / native app flow -------------------------------------------------------
@@ -65,6 +65,8 @@ CONF_USER_PROFILE_ID: Final = "user_profile_id"
 OPT_POSTS_INTERVAL: Final = "posts_interval"  # minutes
 OPT_CALENDAR_DAYS: Final = "calendar_days"  # days ahead
 OPT_POSTS_IN_LIST: Final = "posts_in_list"  # entries in the ``berichten`` attribute
+OPT_READERS: Final = "lezers"  # person entity ids that must have read a post
+OPT_CHILDREN: Final = "kinderen"  # one line per child: ``Naam=groep, groep``
 DEFAULT_POSTS_INTERVAL: Final = 15
 MIN_POSTS_INTERVAL: Final = 10
 MAX_POSTS_INTERVAL: Final = 1440
@@ -95,7 +97,7 @@ ATTRIBUTES_BYTE_BUDGET: Final = 12_000  # JSON bytes of all attributes of one en
 
 # --- Events / storage -----------------------------------------------------------------------
 EVENT_TYPE_NEW_POST: Final = "nieuw_bericht"
-STORAGE_VERSION: Final = 1
+STORAGE_VERSION: Final = 2  # 2 adds the local read marks per person
 STORAGE_KEY_TEMPLATE: Final = "socialschools.{entry_id}"
 SEEN_IDS_LIMIT: Final = 500
 NEW_POST_GRACE: Final = timedelta(days=7)
@@ -116,3 +118,26 @@ ATTR_TRUNCATED: Final = "afgekapt"
 ATTR_ATTACHMENTS: Final = "bijlagen"
 ATTR_COMMENTS: Final = "reacties"
 ATTR_POSTS: Final = "berichten"
+ATTR_READ_BY: Final = "gelezen_door"
+ATTR_TO_READ: Final = "nog_lezen"
+ATTR_NEW: Final = "nieuw"
+ATTR_CHILDREN: Final = "kinderen"
+ATTR_SCHOOLWIDE: Final = "schoolbreed"
+ATTR_URL: Final = "url"
+ATTR_FIRST: Final = "eerste"
+ATTR_PER_PERSON: Final = "per_persoon"
+
+# --- Local read tracking, opened post, children (0.2) ------------------------------------
+# "Read" is bookkeeping inside Home Assistant only; nothing of it is ever sent to Social Schools.
+READ_MARKS_MARGIN: Final = 30  # read marks kept for posts that dropped out of the feed
+OPEN_POST_CACHE_SIZE: Final = 20  # post details kept in memory for open_bericht
+MAX_OPEN_TEXT_LENGTH: Final = 8000
+SCHOOLWIDE_GROUP_THRESHOLD: Final = 3  # a post in more groups than this counts as school-wide
+POST_URL_TEMPLATE: Final = "https://app.socialschools.eu/communityposts/{post_id}"
+SERVICE_MARK_READ: Final = "markeer_gelezen"
+SERVICE_MARK_ALL_READ: Final = "markeer_alles_gelezen"
+SERVICE_OPEN_POST: Final = "open_bericht"
+FIELD_POST_ID: Final = "post_id"
+FIELD_PERSON: Final = "persoon"
+FIELD_READ: Final = "gelezen"
+SIGNAL_LOCAL_UPDATE: Final = "socialschools_local_update_{entry_id}"

@@ -64,7 +64,14 @@ async def test_first_refresh_seeds_store(
     assert coordinator.last_success_utc == FROZEN_NOW
     assert coordinator.update_interval == POLL
     assert hass_storage[STORAGE_KEY]["data"] == {
-        "schools": {"7": {"high_water": "2026-11-03T08:00:00+00:00", "seen_ids": [101, 102, 103]}}
+        "schools": {
+            "7": {
+                "high_water": "2026-11-03T08:00:00+00:00",
+                "seen_ids": [101, 102, 103],
+                "read": {},
+                "readers": [],
+            }
+        }
     }
     school = coordinator.data.schools[7]
     assert school.school.name == "Private School"
@@ -88,6 +95,8 @@ async def test_new_post_is_reported_once(
     assert _stored(hass_storage) == {
         "high_water": "2026-11-04T09:00:00+00:00",
         "seen_ids": [101, 102, 103, 104],
+        "read": {},
+        "readers": [],
     }
     await advance(hass, freezer, POLL)
     assert _new_ids(init_integration) == []
@@ -146,6 +155,8 @@ async def test_unseen_post_older_than_grace_is_not_new(
     assert _stored(hass_storage) == {
         "high_water": "2026-11-03T08:00:00+00:00",
         "seen_ids": [101, 102, 103, 95],
+        "read": {},
+        "readers": [],
     }
     await advance(hass, freezer, POLL)
     assert _new_ids(init_integration) == []
@@ -169,6 +180,8 @@ async def test_restart_seeds_again_without_reporting(
     assert _stored(hass_storage) == {
         "high_water": "2026-11-04T09:00:00+00:00",
         "seen_ids": [101, 102, 103, 104],
+        "read": {},
+        "readers": [],
     }
     await advance(hass, freezer, POLL)
     assert _new_ids(init_integration) == []
