@@ -7,6 +7,44 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-08
+
+### Opgelost
+
+- Hele-dag-activiteiten in de agenda duurden een dag te lang. Social Schools geeft een hele dag
+  door als middernacht UTC (`2026-11-26T00:00:00Z`) met een einde dat al exclusief is; de
+  integratie rekende dat eerst om naar Nederlandse tijd, zag om 01:00 geen middernacht en telde er
+  een dag bij. Een hele dag is nu een kalenderdatum: de datum zoals die in de tekst staat, zonder
+  omrekening naar een tijdzone (met `Z`, met een offset als `+01:00` of zonder tijdzone). Een
+  einde om 00:00 telt niet mee, een ander einde wel, en een activiteit duurt altijd minstens één
+  dag. De studiedag van 26 november staat nu alleen op 26 november; de kerstvakantie vanaf
+  21 december 2026 loopt tot en met zondag 3 januari. Activiteiten met een tijd zijn ongewijzigd.
+
+### Gewijzigd
+
+- `socialschools.open_bericht` toont een bericht dat in de feed staat met de tekst uit de feed en
+  doet daarvoor geen verzoek meer (de probe liet zien dat de feed de volledige tekst bevat). Alleen
+  een bericht dat inmiddels uit de feed is gevallen, of waarvan de feedtekst ingekort lijkt (de
+  tekst eindigt op `…` of `...`, of `FETCH_POST_DETAILS` staat aan), wordt één keer opgehaald met
+  `GET communityposts/{id}` en daarna uit het geheugen getoond. Zo gaan er zo min mogelijk
+  detailverzoeken naar Social Schools; of zo'n verzoek daar als "bekeken" telt, is niet bekend.
+- `open_bericht` opent nu ook een bericht dat uit de feed is gevallen, als de integratie het
+  eerder in de feed zag (de laatste 500 bericht-id's per school, ook na een herstart). Een onbekend
+  id geeft zoals voorheen de melding dat het bericht niet in de huidige feed staat, zonder verzoek.
+- CI: de validatie compileert ook `scripts/release.py` met Python 3.12.
+
+### Toegevoegd
+
+- `scripts/probe.py --kinderen-vorm` beschrijft ook de groepen van de kinderen: het type en de
+  velden van de eerste groep, of een `groupId` (of `id`) uit de communities van de feed in de
+  groepen van een kind voorkomt en bij hoeveel berichten, of een groepsnaam gelijk is aan een
+  communitynaam, en of `yearClass` gelijk is aan een communitynaam (exact, en zonder verschil in
+  hoofdletters en spaties). Alleen typen, veldnamen, ja/nee en aantallen.
+- Releases: bij elke push naar `main` maakt `.github/workflows/release.yml` voor een nieuwe versie
+  in `manifest.json` de tag `v<versie>` en een GitHub-release met de sectie uit deze changelog.
+  `v0.2.0` wordt eenmalig achteraf aangemaakt op de merge-commit van 0.2.0. HACS toont daardoor
+  versienummers in plaats van een commit.
+
 ## [0.2.0] - 2026-11-07
 
 ### Toegevoegd
