@@ -80,6 +80,11 @@ MAX_POSTS_IN_LIST: Final = 20
 # --- Polling --------------------------------------------------------------------------------
 CALENDAR_LOOKBACK_DAYS: Final = 7
 CALENDAR_REFRESH_INTERVAL: Final = timedelta(hours=1)
+# The children of the account and their groups (useraccounts/current) are fetched again once
+# a day, so a new school year or a child that starts school needs no restart; a failed fetch
+# is retried after an hour and keeps the children of the previous fetch meanwhile.
+ACCOUNT_REFRESH_INTERVAL: Final = timedelta(days=1)
+ACCOUNT_RETRY_INTERVAL: Final = timedelta(hours=1)
 POST_COUNT_WINDOW: Final = timedelta(days=7)
 SCHOOL_TIMEZONE: Final = "Europe/Amsterdam"
 

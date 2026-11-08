@@ -53,7 +53,7 @@
           "calendar_days": "Number of days ahead for which calendar events are fetched.",
           "posts_in_list": "Number of posts kept in the list attribute of the posts sensor.",
           "lezers": "Persons who must have read a post before it is no longer new. Read marks stay in Home Assistant and are never sent to Social Schools.",
-          "kinderen": "One line per child, such as Noud=6A. Separate several groups with a comma. Group names must match exactly; case is ignored."
+          "kinderen": "Children and their groups come from the Social Schools account and are refreshed daily. Add a line such as Noud=6A only to add a child or to replace the groups of a child. Separate several groups with a comma. Group names must match exactly; case is ignored."
         }
       }
     },

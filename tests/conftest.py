@@ -88,8 +88,9 @@ def make_account(
     """Return a ``useraccounts/current`` body: a parent role per school plus an employee role.
 
     The employee role (type 2, school 99) must be ignored by the integration.  Every
-    parent role lists a connected child, as the real profile does; that name must never
-    reach a state, the store, the diagnostics or the log.
+    parent role lists a connected child, as the real profile does, but without groups:
+    it matches no post, so its name must never reach a state, the store, the
+    diagnostics or the log.
     """
     roles: list[dict[str, Any]] = [
         {

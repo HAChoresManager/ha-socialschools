@@ -543,7 +543,7 @@ async def test_options_flow_stores_readers_and_children(
     }
     coordinator = init_integration.runtime_data
     assert coordinator.readers == ["person.ouder_een", "person.ouder_twee"]
-    assert [child.name for child in coordinator.children] == ["Kind Een", "Kind Twee"]
+    assert [child.name for child in coordinator.option_children] == ["Kind Een", "Kind Twee"]
 
 
 async def test_options_flow_rejects_unusable_children(

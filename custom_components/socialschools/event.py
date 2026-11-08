@@ -49,8 +49,9 @@ class SocialSchoolsNewPostEvent(SocialSchoolsEntity, EventEntity):
         data = self.school_data
         succeeded = data is not None and self.coordinator.last_update_success
         new_posts = data.new_posts if succeeded else []
+        children = self.coordinator.children_for(self._school_id)
         for post in new_posts:
-            self._trigger_event(EVENT_TYPE_NEW_POST, post_summary(post, self.coordinator.children))
+            self._trigger_event(EVENT_TYPE_NEW_POST, post_summary(post, children))
             self.async_write_ha_state()
         if not new_posts:
             super()._handle_coordinator_update()

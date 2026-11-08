@@ -6,11 +6,14 @@ with a small bookkeeping record per school (``high_water`` and ``seen_ids``)
 that is persisted in a private :class:`Store`.  The same store keeps the local
 read marks per person (``read``/``readers``, storage version 2); those are
 bookkeeping inside Home Assistant only and are never sent to Social Schools.
+Once a day it fetches the account again for the children and their groups,
+which link posts to children together with the ``kinderen`` option.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 import logging
@@ -24,9 +27,11 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .children import Child, parse_children
+from .children import Child, child_from_account, merge_children, parse_children
 from .client import SocialSchoolsClient
 from .const import (
+    ACCOUNT_REFRESH_INTERVAL,
+    ACCOUNT_RETRY_INTERVAL,
     CALENDAR_LOOKBACK_DAYS,
     CALENDAR_REFRESH_INTERVAL,
     DEFAULT_CALENDAR_DAYS,
@@ -49,7 +54,17 @@ from .const import (
     SIGNAL_LOCAL_UPDATE,
 )
 from .errors import ApiError, CannotConnect, InvalidAuth
-from .models import Account, Post, School, SchoolEvent, parse_events, parse_post, parse_posts_page
+from .models import (
+    Account,
+    ConnectedChild,
+    Post,
+    School,
+    SchoolEvent,
+    parse_connected_children,
+    parse_events,
+    parse_post,
+    parse_posts_page,
+)
 from .reading import ReadState
 from .textutil import looks_cut
 
@@ -144,8 +159,12 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
         client: SocialSchoolsClient,
         account: Account,
         store: Store[dict[str, Any]],
+        connected: Mapping[int, Sequence[ConnectedChild]] | None = None,
     ) -> None:
-        """Initialise with the poll interval from the entry options (clamped to the minimum)."""
+        """Initialise with the poll interval from the entry options (clamped to the minimum).
+
+        ``connected`` holds the children of the account per school, as fetched at setup.
+        """
         minutes = max(
             MIN_POSTS_INTERVAL, int(entry.options.get(OPT_POSTS_INTERVAL, DEFAULT_POSTS_INTERVAL))
         )
@@ -167,9 +186,23 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
         self._detail_cache: dict[int, str] = {}
         self._tz = ZoneInfo(SCHOOL_TIMEZONE)
         self.read_state = ReadState()
-        self.children: tuple[Child, ...] = _children_option(entry.options.get(OPT_CHILDREN, ""))
+        self.option_children: tuple[Child, ...] = _children_option(
+            entry.options.get(OPT_CHILDREN, "")
+        )
+        self._account_children = _account_children(connected or {})
+        self._account_refresh_at = dt_util.utcnow() + ACCOUNT_REFRESH_INTERVAL
+        self._account_failing = False
         self.opened: dict[int, Post] = {}  # per school: the post shown by the opened-post sensor
         self._open_cache: OrderedDict[tuple[int, int], Post] = OrderedDict()
+
+    def children_for(self, school_id: int) -> tuple[Child, ...]:
+        """Return the children of a school: those of the account, completed by the option."""
+        return merge_children(self._account_children.get(school_id, ()), self.option_children)
+
+    @property
+    def account_child_count(self) -> int:
+        """Return how many children with groups the account has, over all schools."""
+        return sum(len(children) for children in self._account_children.values())
 
     @property
     def readers(self) -> list[str]:
@@ -298,6 +331,7 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
         calendar_days = self._calendar_days()
         fetched: dict[int, tuple[list[Post], list[SchoolEvent], datetime | None]] = {}
         try:
+            await self._async_refresh_children(now)
             for school in self.account.schools:
                 posts = parse_posts_page(await self.client.async_get_posts(school.id))
                 if FETCH_POST_DETAILS:
@@ -377,6 +411,39 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
                     self._detail_cache[post.id] = text
             result.append(post if text is None else replace(post, text=text))
         return result
+
+    async def _async_refresh_children(self, now: datetime) -> None:
+        """Fetch the children of the account and their groups again, once a day.
+
+        Groups change with the school year and a child that starts school appears in the
+        account; this picks both up without a restart.  A failure keeps the children of
+        the previous fetch and is retried after ACCOUNT_RETRY_INTERVAL (warning once, then
+        debug); authentication errors propagate.  Only counts are logged, never names.
+        """
+        if now < self._account_refresh_at:
+            return
+        try:
+            raw = await self.client.async_get_current_account()
+        except (CannotConnect, ApiError) as err:
+            self._account_refresh_at = now + ACCOUNT_RETRY_INTERVAL
+            if self._account_failing:
+                _LOGGER.debug("The children of the account are still unavailable (%s)", err)
+            else:
+                self._account_failing = True
+                _LOGGER.warning(
+                    "The children of the account could not be refreshed, keeping the previous "
+                    "ones (%s)",
+                    err,
+                )
+            return
+        self._account_failing = False
+        self._account_children = _account_children(parse_connected_children(raw))
+        self._account_refresh_at = now + ACCOUNT_REFRESH_INTERVAL
+        _LOGGER.debug(
+            "Entry %s: %d child(ren) with groups in the account",
+            self.config_entry.entry_id,
+            self.account_child_count,
+        )
 
     async def _async_events(
         self, school: School, now: datetime, calendar_days: int
@@ -466,6 +533,20 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
                 for school_id, tracker in self._trackers.items()
             }
         }
+
+
+def _account_children(
+    connected: Mapping[int, Sequence[ConnectedChild]],
+) -> dict[int, tuple[Child, ...]]:
+    """Return the children of the account per school; a child without a group is left out."""
+    return {
+        school_id: tuple(
+            child
+            for connection in children
+            if (child := child_from_account(connection.name, connection.groups)) is not None
+        )
+        for school_id, children in connected.items()
+    }
 
 
 def _children_option(value: Any) -> tuple[Child, ...]:

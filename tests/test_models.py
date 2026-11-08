@@ -21,10 +21,12 @@ from custom_components.socialschools import models as models_module
 from custom_components.socialschools.errors import ApiError
 from custom_components.socialschools.models import (
     Account,
+    ConnectedChild,
     Post,
     School,
     SchoolEvent,
     parse_account,
+    parse_connected_children,
     parse_datetime,
     parse_event,
     parse_events,
@@ -361,6 +363,129 @@ def test_parse_account_rejects_unusable_profiles(data: Any) -> None:
         parse_account(data)
     assert exc_info.value.status is None
     assert_sanitised(exc_info.value)
+
+
+# --- parse_connected_children ----------------------------------------------------------------
+
+
+def _role(school_id: Any, connections: Any, role_type: int = 1) -> dict[str, Any]:
+    """Return a role of ``useraccounts/current`` with ``connections``."""
+    return {"id": 1, "type": role_type, "school": {"id": school_id}, "connections": connections}
+
+
+def _connection(**overrides: Any) -> dict[str, Any]:
+    """Return a connection in the live shape: groups are names, firstName is set."""
+    data: dict[str, Any] = {
+        "alias": None,
+        "avatar": None,
+        "code": "private-code",
+        "displayName": "Kind Een Achternaam",
+        "firstName": "Kind Een",
+        "groups": ["6A"],
+        "hasMissingConsentItemPreferences": False,
+        "id": 5,
+        "lastName": "Achternaam",
+        "middleInitials": "",
+        "roleType": 3,
+        "yearClass": "6",
+    }
+    data.update(overrides)
+    return data
+
+
+def test_parse_connected_children_live_shape() -> None:
+    """A child of the parent role: its first name and the names in ``groups``."""
+    children = parse_connected_children({"roles": [_role(7, [_connection()])]})
+    assert children == {7: (ConnectedChild(name="Kind Een", groups=("6A",)),)}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        pytest.param({}, ConnectedChild("Kind Een", ("6A",)), id="first-name"),
+        pytest.param(
+            {"firstName": None}, ConnectedChild("Kind Een Achternaam", ("6A",)), id="display-name"
+        ),
+        pytest.param(
+            {"firstName": "  "},
+            ConnectedChild("Kind Een Achternaam", ("6A",)),
+            id="blank-first-name",
+        ),
+        pytest.param(
+            {"groups": ["  6A ", "6A", "Neo  4/5/6"]},
+            ConnectedChild("Kind Een", ("6A", "Neo 4/5/6")),
+            id="collapsed-unique",
+        ),
+        pytest.param(
+            {"groups": [{"name": "6A"}, {"id": 3}, 7, None, ""]},
+            ConnectedChild("Kind Een", ("6A",)),
+            id="objects-and-junk",
+        ),
+        pytest.param({"groups": None}, ConnectedChild("Kind Een", ()), id="no-groups"),
+        pytest.param({"groups": "6A"}, ConnectedChild("Kind Een", ()), id="groups-not-a-list"),
+    ],
+)
+def test_parse_connected_children_fields(
+    overrides: dict[str, Any], expected: ConnectedChild
+) -> None:
+    """The name falls back to displayName; groups keep only non-empty names, in order."""
+    children = parse_connected_children({"roles": [_role(7, [_connection(**overrides)])]})
+    assert children == {7: (expected,)}
+
+
+def test_parse_connected_children_skips_what_is_unusable() -> None:
+    """Other role types, roles without a school id and connections without a name are skipped."""
+    data = {
+        "roles": [
+            _role(7, [_connection(firstName=None, displayName=None), "private-string", None]),
+            _role(8, [_connection()], role_type=2),
+            _role(None, [_connection()]),
+            {"type": 1, "connections": [_connection()]},
+            "private-role",
+        ]
+    }
+    assert parse_connected_children(data) == {7: ()}
+
+
+def test_parse_connected_children_merges_roles_of_one_school() -> None:
+    """Two parent roles at one school: one list, and a child named twice gets both groups."""
+    data = {
+        "roles": [
+            _role(7, [_connection()]),
+            _role(
+                7,
+                [
+                    _connection(groups=["Neo 4/5/6"]),
+                    _connection(firstName="Kind Twee", groups=["1/2A"]),
+                ],
+            ),
+            _role(9, [_connection(firstName="Kind Drie", groups=["3A"])]),
+        ]
+    }
+    assert parse_connected_children(data) == {
+        7: (
+            ConnectedChild("Kind Een", ("6A", "Neo 4/5/6")),
+            ConnectedChild("Kind Twee", ("1/2A",)),
+        ),
+        9: (ConnectedChild("Kind Drie", ("3A",)),),
+    }
+
+
+@pytest.mark.parametrize(
+    "data",
+    [None, [], "private-string", {}, {"roles": None}, {"roles": "private-string"}],
+)
+def test_parse_connected_children_without_roles_is_empty(data: Any) -> None:
+    """Anything without a list of roles yields no children instead of an error."""
+    assert parse_connected_children(data) == {}
+
+
+def test_parse_connected_children_replaces_unpaired_surrogates() -> None:
+    """Names and groups from the API are safe for UTF-8 like every other text."""
+    data = from_api({"roles": [_role(7, [_connection(firstName=CUT, groups=[CUT])])]})
+    (child,) = parse_connected_children(data)[7]
+    assert child == ConnectedChild(CLEANED, (CLEANED,))
+    assert_utf8(child.name, *child.groups)
 
 
 # --- parse_post -----------------------------------------------------------------------------

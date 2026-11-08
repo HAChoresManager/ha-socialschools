@@ -75,6 +75,7 @@ async def test_diagnostics(
             "update_interval_seconds": 900,
             "reader_count": 0,
             "child_count": 0,
+            "account_child_count": 0,
             "posts_with_read_marks": 0,
             "open_post_cache_size": 0,
             "schools_with_opened_post": 0,
