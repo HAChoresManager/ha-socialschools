@@ -502,6 +502,7 @@ config entries, and the attribute byte budget of §10, would fail on it.
 
 ```python
 def looks_like_html(value: str) -> bool            # a tag like <p>, <br/>, </div> or an entity like &amp; / &#39;
+def looks_cut(value: str) -> bool                  # ends in "…" or "..." (trailing whitespace ignored): may be cut off (§17)
 def html_to_text(value: str) -> str                # see rules
 def collapse_whitespace(value: str) -> str         # single line: all whitespace runs → one space, stripped
 def truncate(value: str, limit: int) -> tuple[str, bool]   # keeps len <= limit; appends "…" when cut; (text, truncated)

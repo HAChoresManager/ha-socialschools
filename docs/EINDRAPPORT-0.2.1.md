@@ -143,7 +143,7 @@ groupId-antwoord.
 ontwikkelomgeving niet. Daarom is hij hier niet live gedraaid.
 
 **Automatische koppeling: niet gebouwd.** Volgens de brief komt die er alleen als een koppeling
-werkt, en dat is nog niet vastgesteld. De optie `kinderen` (`Noud=6A`) blijft voorlopig de manier
+werkt, en dat is nog niet vastgesteld. De optie `kinderen` (`Kind=6A`) blijft voorlopig de manier
 om berichten aan kinderen te koppelen; `schoolbreed` is ongewijzigd.
 
 **Zo lees je de uitkomst:**
@@ -153,8 +153,8 @@ om berichten aan kinderen te koppelen; `schoolbreed` is ongewijzigd.
   vervolgstap klein. Per bericht worden de kinderen bepaald via de groepen van hun connection
   (`groups[].X` tegen `communities[].groupId`), met als naam `firstName` (of `displayName`). De
   optie `kinderen` blijft als aanvulling en overschrijving, en `schoolbreed` blijft zoals het is.
-  Dan hoeft er in augustus niets bijgewerkt te worden, en komt Nora er vanzelf bij als ze naar
-  school gaat.
+  Dan hoeft er in augustus niets bijgewerkt te worden, en komt een kind dat naar
+  school gaat er vanzelf bij.
 - Alleen `Groepsnaam … ja`: dan kan een koppeling op naam, met dezelfde exacte vergelijking als de
   optie. Ook dat volgt de groepen automatisch.
 - Alleen `yearClass … ja`: dat is bruikbaar, maar zwakker, omdat de jaargroep niet altijd de naam
