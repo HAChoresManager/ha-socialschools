@@ -4,9 +4,8 @@ name: Release
 # main. On every push to main, scripts/release.py reads the version in manifest.json and,
 # when the tag v<version> does not exist yet, creates that tag on the commit where the
 # version arrived on main, with a release whose text is the version's CHANGELOG.md
-# section. Versions from before this workflow (BACKFILL_VERSIONS in the script, 0.2.0)
-# are tagged the same way once. Nothing here runs on pull requests, so it is never one
-# of the checks a pull request has to pass.
+# section. Nothing here runs on pull requests, so it is never one of the checks a pull
+# request has to pass.
 
 on:
   push:
