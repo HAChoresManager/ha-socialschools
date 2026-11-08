@@ -7,6 +7,31 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-08
+
+### Toegevoegd
+
+- Berichten worden automatisch aan je kinderen gekoppeld. Het account noemt bij de ouderrol elk
+  kind met de namen van zijn groepen (`connections[].groups`); een bericht in een van die groepen
+  krijgt de voornaam van het kind in `kinderen`, met dezelfde exacte vergelijking als de optie
+  (hoofdletters en extra spaties tellen niet). De probe vond zo'n koppeling bij 16 van de 20
+  berichten in de feed; `groupId` en `yearClass` komen niet overeen.
+- De kinderen en hun groepen worden elke dag opnieuw uit het account gehaald (één extra
+  leesaanvraag per dag, op het bestaande pad `useraccounts/current`). Een nieuw schooljaar of een
+  kind dat naar school gaat, komt er zo vanzelf bij, zonder herstart. Mislukt het ophalen, dan
+  blijven de vorige kinderen staan en volgt na een uur een nieuwe poging.
+- Diagnostische gegevens tonen het aantal kinderen uit het account (`account_child_count`), geen
+  namen.
+
+### Gewijzigd
+
+- De optie *Kinderen en groepen* is nu een aanvulling en overschrijving: een regel voor een kind
+  uit het account vervangt diens groepen, een regel voor een ander kind voegt dat kind toe. Klopt
+  de koppeling uit het account, dan kan de optie leeg blijven.
+- Releases: `v0.2.0` wordt niet meer achteraf aangemaakt. GitHub weigert de `GITHUB_TOKEN` een tag
+  op een commit waarvan de workflowbestanden afwijken van `main` (HTTP 403), en de workflow
+  faalde daardoor bij elke push. Een geweigerde tag noemt nu beide bekende oorzaken.
+
 ## [0.2.1] - 2026-11-08
 
 ### Opgelost

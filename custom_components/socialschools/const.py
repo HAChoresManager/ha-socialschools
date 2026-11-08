@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "socialschools"
-VERSION: Final = "0.2.1"  # keep equal to manifest.json "version" (checked by a test)
+VERSION: Final = "0.2.2"  # keep equal to manifest.json "version" (checked by a test)
 USER_AGENT: Final = f"HomeAssistant-SocialSchools/{VERSION}"
 
 # --- OpenID Connect / native app flow -------------------------------------------------------
