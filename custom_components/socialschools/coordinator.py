@@ -51,6 +51,7 @@ from .const import (
 from .errors import ApiError, CannotConnect, InvalidAuth
 from .models import Account, Post, School, SchoolEvent, parse_events, parse_post, parse_posts_page
 from .reading import ReadState
+from .textutil import looks_cut
 
 if TYPE_CHECKING:
     from . import SocialSchoolsConfigEntry
@@ -193,6 +194,19 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
                     return school_data.school, post
         return None
 
+    def find_earlier_post(self, post_id: int) -> School | None:
+        """Return the school whose feed held ``post_id`` before, if this entry knows it.
+
+        That is a post that has dropped out of the feed since: its id is among the
+        seen ids of the new-post bookkeeping (the newest SEEN_IDS_LIMIT per school,
+        kept across restarts) or its detail is still cached.
+        """
+        for school in self.account.schools:
+            seen_ids = self._trackers[school.id].seen_ids
+            if post_id in seen_ids or (school.id, post_id) in self._open_cache:
+                return school
+        return None
+
     async def async_mark_read(
         self, school_id: int, post_ids: list[int], person: str, read: bool
     ) -> None:
@@ -204,24 +218,57 @@ class SocialSchoolsCoordinator(DataUpdateCoordinator[SocialSchoolsData]):
     async def async_open_post(self, school: School, post_id: int) -> Post:
         """Show the full post ``post_id`` in the opened-post sensor and return it.
 
-        The detail comes from ``GET communityposts/{id}`` (already whitelisted) and is
-        kept in a small in-memory cache, so opening it again costs no request.
+        A post in the current feed is shown as the feed has it, without a request: the
+        feed carries the whole body (the probe found feed and detail bodies equally
+        long).  Only a post that has dropped out of the feed, or a feed text with a sign
+        of being cut off (see ``_feed_text_may_be_cut``), is fetched with the whitelisted
+        ``GET communityposts/{id}``; fetched posts stay in a small in-memory cache, so
+        opening one again costs no request either.  Whether Social Schools counts such
+        a fetch as a view is unknown, so it is kept to these cases.
+
         Raises CannotConnect, ApiError, InvalidAuth or ValueError; the previously
         opened post then stays.
         """
-        key = (school.id, post_id)
-        post = self._open_cache.get(key)
-        if post is None:
-            post = parse_post(await self.client.async_get_post(school.id, post_id))
-            if post.id != post_id:
-                raise ValueError("the detail belongs to another post")
-            self._open_cache[key] = post
-            while len(self._open_cache) > OPEN_POST_CACHE_SIZE:
-                self._open_cache.popitem(last=False)
+        feed_post = self._feed_post(school.id, post_id)
+        if feed_post is not None and not self._feed_text_may_be_cut(feed_post):
+            post = feed_post
         else:
-            self._open_cache.move_to_end(key)
+            post = await self._async_fetch_for_opening(school, post_id)
         self.opened[school.id] = post
         async_dispatcher_send(self.hass, self.local_update_signal)
+        return post
+
+    def _feed_post(self, school_id: int, post_id: int) -> Post | None:
+        """Return the post ``post_id`` from the current feed of a school, if it is there."""
+        school_data = self.data.schools.get(school_id) if self.data is not None else None
+        if school_data is None:
+            return None
+        return next((post for post in school_data.posts if post.id == post_id), None)
+
+    def _feed_text_may_be_cut(self, post: Post) -> bool:
+        """Return True when there is a sign that the feed text of ``post`` is not complete.
+
+        With FETCH_POST_DETAILS (set when the probe finds shorter feed bodies) every feed
+        text counts as cut, unless the coordinator already replaced it by the detail text.
+        Otherwise a text that ends in an ellipsis (``…`` or ``...``) counts as cut.
+        """
+        if post.id in self._detail_cache:
+            return False
+        return FETCH_POST_DETAILS or looks_cut(post.text)
+
+    async def _async_fetch_for_opening(self, school: School, post_id: int) -> Post:
+        """Return the detail of a post from the cache, else fetch it once and cache it."""
+        key = (school.id, post_id)
+        post = self._open_cache.get(key)
+        if post is not None:
+            self._open_cache.move_to_end(key)
+            return post
+        post = parse_post(await self.client.async_get_post(school.id, post_id))
+        if post.id != post_id:
+            raise ValueError("the detail belongs to another post")
+        self._open_cache[key] = post
+        while len(self._open_cache) > OPEN_POST_CACHE_SIZE:
+            self._open_cache.popitem(last=False)
         return post
 
     @property

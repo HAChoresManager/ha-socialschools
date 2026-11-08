@@ -1,0 +1,40 @@
+name: Release
+
+# Tags and GitHub releases, so that HACS offers versions instead of following a commit of
+# main. On every push to main, scripts/release.py reads the version in manifest.json and,
+# when the tag v<version> does not exist yet, creates that tag on the commit where the
+# version arrived on main, with a release whose text is the version's CHANGELOG.md
+# section. Versions from before this workflow (BACKFILL_VERSIONS in the script, 0.2.0)
+# are tagged the same way once. Nothing here runs on pull requests, so it is never one
+# of the checks a pull request has to pass.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write # create tags and releases; nothing else
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    # A manual run from another branch would tag that branch's commits.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history and every tag: the script looks up the commit at which a
+          # version arrived and skips versions whose tag exists already.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create missing tags and releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release.py

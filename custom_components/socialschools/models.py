@@ -235,20 +235,22 @@ def parse_posts_page(data: Any) -> list[Post]:
     return posts
 
 
-def _all_day_end(start: datetime, end: datetime | None) -> date:
-    """Return the exclusive end date of an all-day event from its local start and end.
+def _all_day_dates(start: datetime, end: datetime | None) -> tuple[date, date]:
+    """Return the start date and the exclusive end date of an all-day event.
 
-    An end at local midnight after the start is already exclusive; any other
-    end is inclusive and moves to the next day.  The result is after the start date.
+    A whole day is a calendar date, not an instant: ``start`` and ``end`` are the
+    timestamps exactly as written (``Z``, an offset or none alike) and are never
+    converted to another zone.  The API sends whole days as ``2026-11-26T00:00:00Z``
+    with an end that is already exclusive; converted to Europe/Amsterdam that end
+    would read 01:00 and gain a day.  An end at 00:00 is exclusive as it stands, any
+    other end is inclusive and moves to the next day, and the end always falls at
+    least one day after the start.
     """
     start_date = start.date()
     if end is None:
-        return start_date + _ONE_DAY
-    if end.time() == _MIDNIGHT and end.astimezone(UTC) > start.astimezone(UTC):
-        end_date = end.date()
-    else:
-        end_date = end.date() + _ONE_DAY
-    return max(end_date, start_date + _ONE_DAY)
+        return start_date, start_date + _ONE_DAY
+    end_date = end.date() if end.time() == _MIDNIGHT else end.date() + _ONE_DAY
+    return start_date, max(end_date, start_date + _ONE_DAY)
 
 
 def _timed_end(start: datetime, end: datetime | None, tz: tzinfo) -> datetime:
@@ -260,31 +262,39 @@ def _timed_end(start: datetime, end: datetime | None, tz: tzinfo) -> datetime:
 
 
 def parse_event(data: Mapping[str, Any], *, tz: tzinfo) -> SchoolEvent:
-    """Build a SchoolEvent in ``tz``; raises ValueError when ``id`` or ``start`` is unusable.
+    """Build a SchoolEvent; raises ValueError when ``id`` or ``start`` is unusable.
 
-    All-day events become dates with an exclusive end; timed events get aware
-    datetimes in ``tz`` and last one hour when ``end`` is missing or not after
-    the start.  Timestamps without offset are taken to be in ``tz``.
+    All-day events become dates with an exclusive end, read from the timestamps as
+    written, without any time zone conversion (see ``_all_day_dates``).  Timed events
+    get aware datetimes in ``tz`` (a timestamp without offset is taken to be in
+    ``tz``) and last one hour when ``end`` is missing or not after the start.
     """
     if not isinstance(data, Mapping):
         raise ValueError("event is not an object")
     event_id = _as_int(data.get("id"))
     if event_id is None:
         raise ValueError("event without a valid id")
-    try:
-        start = parse_datetime(data.get("start"), assume_tz=tz).astimezone(tz)
-    except (ValueError, OverflowError):
-        raise ValueError("event without a valid start") from None
-    try:
-        end: datetime | None = parse_datetime(data.get("end"), assume_tz=tz).astimezone(tz)
-    except (ValueError, OverflowError):
-        end = None
     all_day = bool(data.get("allDay"))
     try:
-        start_value: datetime | date = start.date() if all_day else start
-        end_value: datetime | date = (
-            _all_day_end(start, end) if all_day else _timed_end(start, end, tz)
-        )
+        start = parse_datetime(data.get("start"), assume_tz=tz)
+        if not all_day:
+            start = start.astimezone(tz)
+    except (ValueError, OverflowError):
+        raise ValueError("event without a valid start") from None
+    end: datetime | None
+    try:
+        end = parse_datetime(data.get("end"), assume_tz=tz)
+        if not all_day:
+            end = end.astimezone(tz)
+    except (ValueError, OverflowError):
+        end = None
+    start_value: datetime | date
+    end_value: datetime | date
+    try:
+        if all_day:
+            start_value, end_value = _all_day_dates(start, end)
+        else:
+            start_value, end_value = start, _timed_end(start, end, tz)
     except OverflowError:
         raise ValueError("event with a start or end outside the supported range") from None
     return SchoolEvent(

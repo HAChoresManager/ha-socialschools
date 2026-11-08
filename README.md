@@ -64,6 +64,10 @@ weten doe je dat alleen bij Social Schools zelf.
    *Add*.
 3. Zoek "Social Schools" in HACS, *Download*, en herstart Home Assistant.
 
+Elke versie heeft een release met een tag (`v0.2.1`, `v0.2.0`, …), zodat HACS het
+versienummer toont en je een versie kunt kiezen in plaats van een commit van `main`. Welke
+versie je draait, zie je in HACS en onder *Instellingen → Apparaten & diensten → Social Schools*.
+
 ### Handmatig
 
 Kopieer de map `custom_components/socialschools` uit deze repository naar de map
@@ -181,9 +185,12 @@ gemist.
 
 Een gewone agenda-entiteit: `on` zolang er een activiteit bezig is, anders `off`, met de
 standaardattributen (`message`, `start_time`, `end_time`, `all_day`, `location`, `description`)
-van de lopende of eerstvolgende activiteit. Hele-dag-activiteiten zijn echte hele-dag-items;
-activiteiten met een tijd staan in Nederlandse tijd (Europe/Amsterdam). De agenda beslaat zeven
-dagen terug tot de ingestelde horizon vooruit en wordt elk uur ververst. Ze is te gebruiken in de
+van de lopende of eerstvolgende activiteit. Hele-dag-activiteiten zijn echte hele-dag-items
+met de datums zoals Social Schools die doorgeeft, zonder omrekening naar een tijdzone: een
+studiedag op 26 november staat op 26 november (einddatum 27 november, die niet meetelt) en een
+vakantie tot en met zondag 3 januari heeft als einddatum 4 januari. Activiteiten met een tijd
+staan in Nederlandse tijd (Europe/Amsterdam). De agenda beslaat zeven dagen terug tot de
+ingestelde horizon vooruit en wordt elk uur ververst. Ze is te gebruiken in de
 agendakaart van het dashboard en met de actie `calendar.get_events`.
 
 ### `sensor.…_ongelezen`
@@ -209,10 +216,14 @@ het nieuwste bericht. Toestand: de titel (max. 255 tekens).
 | `bijlagen` | bestandsnamen van de bijlagen |
 | `gelezen_door`, `nog_lezen` | als in `berichten` |
 
-Openen haalt het bericht op met hetzelfde leesverzoek als de app (`GET communityposts/<id>`) en
-bewaart de laatste 20 geopende berichten in het geheugen, zodat opnieuw openen geen verzoek kost.
-Openen markeert niets als gelezen: laat je dashboard daarvoor `socialschools.markeer_gelezen`
-aanroepen. Mislukt het ophalen, dan blijft het vorige bericht staan en meldt de actie een fout.
+Staat het bericht in de feed, dan komt de tekst uit de feed en kost openen **geen verzoek**: de
+feed bevat de volledige tekst. Alleen een bericht dat inmiddels uit de feed is gevallen (de
+integratie onthoudt per school de laatste 500 bericht-id's, ook na een herstart), of waarvan de
+feedtekst ingekort lijkt (hij eindigt op `…` of `...`), wordt opgehaald met hetzelfde leesverzoek
+als de app (`GET communityposts/<id>`); de laatste 20 opgehaalde berichten blijven in het
+geheugen, zodat opnieuw openen geen verzoek kost. Openen markeert niets als gelezen: laat je
+dashboard daarvoor `socialschools.markeer_gelezen` aanroepen. Mislukt het ophalen, dan blijft het
+vorige bericht staan en meldt de actie een fout.
 
 ## Gelezen per persoon
 
@@ -241,7 +252,8 @@ leesbevestigingen, geen "gezien"-registratie, geen extra API-paden. Het is admin
 Zonder `persoon` geldt de persoon die bij de ingelogde gebruiker hoort (het attribuut `user_id`
 van de `person`-entiteit). Op een gedeelde tablet met een kiosk-gebruiker zonder persoon moet je
 `persoon` meegeven; anders volgt de melding "Kies wie het bericht gelezen heeft". Een persoon die
-geen lezer is, of een `post_id` die niet in de huidige feed staat, geeft ook een nette fout. De
+geen lezer is, of een `post_id` die niet in de huidige feed staat, geeft ook een nette fout
+(`open_bericht` opent daarnaast een bericht dat de integratie eerder in de feed zag). De
 entiteiten werken meteen bij, zonder verzoek aan Social Schools.
 
 Tablet (kiosk-gebruiker, je kiest wie je bent):
@@ -413,6 +425,27 @@ veldnamen. Bij een fout drukt het script alleen de naam van de fout en een opges
 af en stopt het met exitcode 1. `python scripts/probe.py --check` controleert alleen of de
 protocolmodules zonder Home Assistant laden (dat gebruikt de testsuite).
 
+Twee onderzoeksopties voegen een blok toe aan de uitvoer, ook zonder inhoud:
+
+- `--agenda-vorm`: per agenda-item van de komende 60 dagen alleen `allDay` en de ruwe `start` en
+  `end` met hun tijdzone (`Z`, een offset of geen).
+- `--kinderen-vorm`: de veldnamen van de kinderen (`connections`) in je account, het type en de
+  velden van hun eerste groep, of een `groupId` (of `id`) uit de communities van de feed in de
+  groepen van een kind voorkomt en bij hoeveel berichten, of een groepsnaam gelijk is aan een
+  communitynaam, en of `yearClass` gelijk is aan een communitynaam. Geen namen van kinderen of
+  groepen en geen id's.
+
+Heb je de repository niet lokaal (bijvoorbeeld omdat je via HACS installeert en geen git hebt),
+dan haalt een wegwerpcontainer haar op, draait de probe en ruim je daarna alles op:
+
+```sh
+mkdir -p ~/ss-probe
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v ~/ss-probe:/w alpine/git clone --depth 1 https://github.com/HAChoresManager/ha-socialschools.git /w
+cd ~/ss-probe && docker run --rm -it --network host -v "$PWD":/w -w /w python:3.12-slim \
+  sh -c "pip install -q --root-user-action=ignore --disable-pip-version-check aiohttp && python scripts/probe.py --kinderen-vorm"
+cd ~ && rm -rf ~/ss-probe
+```
+
 Wat de uitkomst betekent:
 
 - **Refresh werkt: nee** – de integratie zou na ongeveer een uur om opnieuw inloggen vragen;
@@ -458,7 +491,8 @@ Wat de uitkomst betekent:
 - Het aantal aanvragen blijft ruim onder **20 per uur per school**: bij het standaardinterval
   4 feed-aanvragen en 1 agenda-aanvraag per uur per school, plus ongeveer één tokenverversing per
   uur per account en één accountaanvraag bij het opstarten. Bij het minimum van 10 minuten zijn
-  het 7 aanvragen per uur per school. Berichtdetails worden standaard niet opgehaald.
+  het 7 aanvragen per uur per school. Berichtdetails worden standaard niet opgehaald, ook niet
+  door `open_bericht` voor een bericht dat in de feed staat.
 - Alleen **ouderrollen**; andere rollen worden overgeslagen.
 - Eén Social Schools-account per configuratie; meerdere accounts zijn meerdere configuraties.
 - Nederlandse en Engelse vertalingen; de attribuutnamen zijn altijd Nederlands.
@@ -487,6 +521,13 @@ ruff check .
   pull request en wekelijks.
 - `docs/DESIGN.md` is het ontwerpcontract (namen, gedrag, grenzen); gedragswijzigingen horen
   daar ook in.
+- Releases (`.github/workflows/release.yml`): bij elke push naar `main` leest
+  `scripts/release.py` de versie uit `manifest.json`; bestaat de tag `v<versie>` nog niet, dan
+  maakt het die tag op de commit waarmee de versie op `main` kwam (bij een gemergede pull request
+  de merge-commit) en een GitHub-release met de sectie van die versie uit `CHANGELOG.md`. Een
+  nieuwe versie uitbrengen is dus: `version` in `manifest.json` en `VERSION` in `const.py`
+  ophogen, een sectie `## [x.y.z] - datum` in `CHANGELOG.md` schrijven en de pull request mergen.
+  `python3 scripts/release.py --dry-run` laat zien wat er zou gebeuren.
 
 ## Licentie
 

@@ -145,11 +145,11 @@
     },
     "open_bericht": {
       "name": "Open bericht",
-      "description": "Toont de volledige tekst van een bericht uit de feed in de sensor Geopend bericht. Openen markeert niets als gelezen.",
+      "description": "Toont de volledige tekst van een bericht in de sensor Geopend bericht: rechtstreeks uit de feed, of één keer opgehaald voor een bericht dat er inmiddels uit is gevallen. Openen markeert niets als gelezen.",
       "fields": {
         "post_id": {
           "name": "Bericht-id",
-          "description": "Het id van een bericht in de huidige feed."
+          "description": "Het id van een bericht in de feed, of van een bericht dat er inmiddels uit is gevallen."
         }
       }
     }

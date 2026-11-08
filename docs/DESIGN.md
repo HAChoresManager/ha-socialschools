@@ -35,7 +35,9 @@ custom_components/socialschools/
   translations/nl.json
   translations/en.json
 scripts/probe.py       live protocol check, reuses the PURE modules only
+scripts/release.py     CI helper: missing tags and GitHub releases (§17), standard library only
 tests/                 pytest (pytest-homeassistant-custom-component)
+.github/workflows/     validate.yml (hassfest, HACS, tests) and release.yml (§17)
 ```
 
 ### PURE modules
@@ -59,7 +61,7 @@ meta-path finder that raises on any `homeassistant` import.
 
 ```python
 DOMAIN = "socialschools"
-VERSION = "0.1.0"                       # must equal manifest.json "version" (tested)
+VERSION = "0.2.1"                       # must equal manifest.json "version" (tested)
 USER_AGENT = f"HomeAssistant-SocialSchools/{VERSION}"
 
 OIDC_ISSUER = "https://login.socialschools.eu"
@@ -471,11 +473,18 @@ def parse_event(data: Mapping, *, tz: tzinfo) -> SchoolEvent
 def parse_events(data: Any, *, tz: tzinfo) -> list[SchoolEvent]    # sorted by start
 ```
 
-All-day rule in `parse_event`: convert start/end to `tz`; `start_date = start.date()`;
-if `end` is at local midnight and `end > start` → `end_date = end.date()`
-(already exclusive), else `end_date = end.date() + 1 day`; always ensure
-`end_date > start_date`. Timed events: aware datetimes converted to `tz`;
-a missing/invalid `end` → `start + 1 hour`; `end <= start` → `start + 1 hour`.
+All-day rule in `parse_event` (0.2.1): a whole day is a calendar date, not an
+instant, so `start` and `end` are **never converted** to another zone; the date and
+the time are read as they stand in the text (`Z`, an offset such as `+01:00`, or no
+zone alike). `start_date = start.date()`; if the time of `end` is 00:00 →
+`end_date = end.date()` (already exclusive), else `end_date = end.date() + 1 day`;
+a missing/invalid `end` → `start_date + 1 day`; always ensure
+`end_date >= start_date + 1 day`. The live API sends whole days as UTC midnight with
+an exclusive end (`2026-11-26T00:00:00Z` … `2026-11-27T00:00:00Z`, probe of
+8 November 2026); 0.2.0 converted that end to 01:00 Europe/Amsterdam, took it for an
+inclusive end and added a day. Timed events: aware datetimes converted to `tz`, naive
+ones taken as `tz`; a missing/invalid `end` → `start + 1 hour`; `end <= start` →
+`start + 1 hour`.
 `parse_datetime` rejects years outside 1900–9000, and `parse_datetime`,
 `parse_post` and `parse_event` treat an `OverflowError` from a datetime
 conversion like `ValueError`, so `parse_posts_page` and `parse_events` skip
@@ -493,6 +502,7 @@ config entries, and the attribute byte budget of §10, would fail on it.
 
 ```python
 def looks_like_html(value: str) -> bool            # a tag like <p>, <br/>, </div> or an entity like &amp; / &#39;
+def looks_cut(value: str) -> bool                  # ends in "…" or "..." (trailing whitespace ignored): may be cut off (§17)
 def html_to_text(value: str) -> str                # see rules
 def collapse_whitespace(value: str) -> str         # single line: all whitespace runs → one space, stripped
 def truncate(value: str, limit: int) -> tuple[str, bool]   # keeps len <= limit; appends "…" when cut; (text, truncated)
@@ -715,6 +725,22 @@ detail, and the events of −7…+90 days, and prints only:
 Nothing else is printed or written; exceptions print only their class name
 and the sanitised message.
 
+Two opt-in investigations (0.2.0, extended in 0.2.1) add a section, again without
+content:
+
+* `--agenda-vorm`: for the calendar items of the coming 60 days only `allDay`, the raw
+  `start`/`end` strings and their zone designator (`Z`, an offset or none).
+* `--kinderen-vorm`: the field names and value types of the parent role and its
+  `connections[]` (the children); whether ids under group-like keys of the connections
+  occur in the feed's `communities[].id`/`groupId`; then the number of groups per
+  connection, the type (for an object: field names and types) of the first
+  `roles[i].connections[j].groups[0]`, whether a feed `communities[].groupId` and,
+  separately, `communities[].id` occurs among the id-like values of the groups
+  (`ja, bij N van M berichten (via groups[].<key>)` / `nee` / `onbekend`), whether a
+  group name equals a community name, and whether `yearClass` equals a community name
+  exactly and after collapsing whitespace and case folding. Never names, group names
+  or ids.
+
 ## 14. Tests
 
 pytest with `pytest-homeassistant-custom-component` (a Python 3.14 virtual
@@ -863,7 +889,7 @@ Actions (registered in `async_setup`, `CONFIG_SCHEMA` is config-entry only):
 |---|---|---|
 | `markeer_gelezen` | `post_id` (int, required), `persoon` (person entity), `gelezen` (bool, default true) | marks one feed post for one person |
 | `markeer_alles_gelezen` | `persoon` | marks every feed post of every entry where the person is a reader |
-| `open_bericht` | `post_id` (int, required) | `GET communityposts/{id}` (LRU cache of `OPEN_POST_CACHE_SIZE` = 20 per entry), shown by the opened-post sensor |
+| `open_bericht` | `post_id` (int, required) | shown by the opened-post sensor; a feed post as the feed has it (no request), otherwise `GET communityposts/{id}` with an LRU cache of `OPEN_POST_CACHE_SIZE` = 20 per entry (§17) |
 
 Without `persoon` the person is the `person` state whose `user_id` attribute is
 `call.context.user_id`. Errors are `ServiceValidationError` with translation
@@ -883,3 +909,57 @@ unrecorded). `post_summary` adds `kinderen`, `schoolbreed` and `url`
 (`POST_URL_TEMPLATE`, the web app route `/communityposts/:postId`); the post list
 adds `gelezen_door`, `nog_lezen`, `nieuw`.
 
+## 17. Version 0.2.1: all-day dates, opening from the feed, children probe, releases
+
+* **All-day dates** are read as written, without any time zone conversion (§7).
+  `calendar.py` is unchanged: for its `event` choice and the overlap test an all-day
+  date still counts as local midnight in Home Assistant's zone (§10).
+* **`open_bericht`** (`SocialSchoolsCoordinator.async_open_post`). The probe found the
+  feed body as long as the detail body (494/494), and whether a detail request counts
+  as a view at Social Schools (posts carry `readStatistics`) is unknown, so detail
+  requests are kept to the cases that need one:
+  * a post in the current feed of its school is shown as the feed has it: no request;
+  * the detail is fetched only for a post that has dropped out of the feed, or when
+    `_feed_text_may_be_cut` sees a sign that the feed text is not complete:
+    `FETCH_POST_DETAILS` is set (unless the poll already replaced the text by the
+    detail text, `_detail_cache`), or the text ends in an ellipsis
+    (`textutil.looks_cut`: `…` or `...`, trailing whitespace ignored);
+  * fetched posts go into the LRU cache (`OPEN_POST_CACHE_SIZE`), which is consulted
+    before any fetch; a failed fetch raises (`open_failed`), caches nothing and keeps
+    the previously opened post.
+
+  The action looks the post up in every current feed first (`find_post`) and only
+  then among the posts each entry saw before (`find_earlier_post`: the `seen_ids` of
+  the new-post bookkeeping, the newest `SEEN_IDS_LIMIT` per school and persisted, or
+  the open cache). An id found nowhere is `unknown_post`, before any request.
+  `markeer_gelezen` still accepts feed posts only.
+* **Children.** `scripts/probe.py --kinderen-vorm` describes the groups of the
+  children against the feed (§13). An automatic link between posts and children is
+  not built yet: it waits for the outcome of that probe. The `kinderen` option stays
+  the way to link them.
+* **Releases.** `.github/workflows/release.yml` runs on every push to `main` (and on a
+  manual run, on `main` only) with `permissions: contents: write`, only
+  `actions/checkout` (pinned, `fetch-depth: 0`, `persist-credentials: false`) and the
+  `gh` CLI with `GITHUB_TOKEN`; it never runs on pull requests, so it is not one of the
+  required checks. It runs `python3 scripts/release.py`:
+
+  ```python
+  BACKFILL_VERSIONS = ("0.2.0",)          # versions from before the workflow, tagged once
+  def manifest_version(text: str) -> str                    # "x.y.z", else ReleaseError
+  def changelog_section(text: str, version: str) -> str     # body of "## [version] - date", up to
+                                                            # the next "## " or a link definition;
+                                                            # missing/empty → ReleaseError
+  def first_parent_history(repo, ref="HEAD") -> list[tuple[str, str | None]]
+      # (commit, manifest version) of the first-parent commits that changed the manifest, newest first
+  def release_commit(history, version) -> str | None        # oldest commit of the newest run carrying
+                                                            # version: for a merged PR the merge commit
+  def run(repo, *, dry_run=False) -> int
+  ```
+
+  For the backfill versions and then the manifest version, a version whose tag
+  `v<version>` exists is skipped; otherwise `gh release create v<version> --target
+  <commit> --title v<version> --notes-file <section> --latest=<only the manifest
+  version>`. A version without a commit on the branch or without its changelog
+  section is not released and fails the run (`::error::`), as does a refused tag,
+  with a pointer to tag rulesets: "Restrict creations" on a tag ruleset that covers
+  `v*` blocks the `GITHUB_TOKEN`, which cannot be put on a bypass list.

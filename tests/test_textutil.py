@@ -13,6 +13,7 @@ import pytest
 from custom_components.socialschools.textutil import (
     collapse_whitespace,
     html_to_text,
+    looks_cut,
     looks_like_html,
     truncate,
 )
@@ -427,6 +428,42 @@ def test_looks_like_html_true(value: str) -> None:
 def test_looks_like_html_false(value: str) -> None:
     """Comparisons, bare ampersands and unknown entities are plain text."""
     assert looks_like_html(value) is False
+
+
+# --- looks_cut ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "De rest van de tekst…",
+        "De rest van de tekst...",
+        "De rest van de tekst… \n\t ",
+        "Eerste regel\nTweede regel...",
+        "…",
+    ],
+)
+def test_looks_cut_true(value: str) -> None:
+    """A text that ends in an ellipsis (trailing whitespace ignored) may have been cut off."""
+    assert looks_cut(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "   ",
+        "Groetjes, juf",
+        "Tot morgen.",
+        "Wat neem je mee?",
+        "Het begint… en het eindigt hier.",
+        "Twee punten..",
+        "[…] einde",
+    ],
+)
+def test_looks_cut_false(value: str) -> None:
+    """Any other ending, an ellipsis in the middle and an empty text are no sign of a cut."""
+    assert looks_cut(value) is False
 
 
 # --- collapse_whitespace --------------------------------------------------------------------

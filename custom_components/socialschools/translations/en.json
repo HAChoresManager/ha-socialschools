@@ -145,11 +145,11 @@
     },
     "open_bericht": {
       "name": "Open post",
-      "description": "Shows the full text of a post from the feed in the opened post sensor. Opening marks nothing as read.",
+      "description": "Shows the full text of a post in the opened post sensor: straight from the feed, or fetched once for a post that has dropped out of the feed since. Opening marks nothing as read.",
       "fields": {
         "post_id": {
           "name": "Post ID",
-          "description": "The ID of a post in the current feed."
+          "description": "The ID of a post in the feed, or of one that has dropped out of it since."
         }
       }
     }
