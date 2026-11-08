@@ -46,6 +46,7 @@ _HEAD_TAGS = frozenset({"base", "link", "meta", "noscript", "title"})
 """Elements that live in ``head``; any other start tag ends an unclosed ``head`` (as browsers do)."""
 _LIST_PREFIX = "- "
 _ELLIPSIS = "…"
+_CUT_MARKERS = (_ELLIPSIS, "...")
 
 _TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
 _ENTITY_RE = re.compile(r"&(#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);")
@@ -63,6 +64,15 @@ def looks_like_html(value: str) -> bool:
         match.group(1).startswith("#") or f"{match.group(1)};" in html5
         for match in _ENTITY_RE.finditer(value)
     )
+
+
+def looks_cut(value: str) -> bool:
+    """Return True when ``value`` ends the way a text that was cut off does: with an ellipsis.
+
+    ``…`` or ``...`` at the very end, trailing whitespace ignored.  A hint, not proof: an
+    author may end a text like that on purpose.
+    """
+    return value.rstrip().endswith(_CUT_MARKERS)
 
 
 def collapse_whitespace(value: str) -> str:

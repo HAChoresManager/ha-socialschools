@@ -385,12 +385,23 @@ async def test_only_whitelisted_get_requests_are_sent(
     mock_api: AiohttpClientMocker,
     api_state: ApiState,
 ) -> None:
-    """Marking, opening and polling send nothing but GETs on the four whitelisted API paths."""
+    """Marking, opening and polling send nothing but GETs on the four whitelisted API paths.
+
+    Opening covers both cases: a feed post (no request at all) and a post that has
+    dropped out of the feed (one ``GET communityposts/{id}``).
+    """
     users = await _setup(hass, mock_config_entry)
     await _new_post(hass, freezer, api_state)
     await _call(hass, SERVICE_MARK_READ, {"post_id": 104}, users[ONE])
     await _call(hass, SERVICE_MARK_ALL_READ, {"persoon": TWO}, users["kiosk"])
+    requests_before = len(api_state.request_log)
     await _call(hass, SERVICE_OPEN_POST, {"post_id": 102}, users["kiosk"])
+    assert len(api_state.request_log) == requests_before
+    api_state.post_details[101] = next(post for post in api_state.posts if post["id"] == 101)
+    api_state.posts = [post for post in api_state.posts if post["id"] != 101]
+    await advance(hass, freezer, POLL)
+    await _call(hass, SERVICE_OPEN_POST, {"post_id": 101}, users["kiosk"])
+    assert len(api_state.requests_for("/api/v1/communityposts/101")) == 1
     for method, url, _headers in api_state.request_log:
         if url.host == "login.socialschools.eu":
             assert (method, url.path) == ("POST", "/connect/token")

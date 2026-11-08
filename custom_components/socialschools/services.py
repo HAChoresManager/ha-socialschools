@@ -1,9 +1,11 @@
 """Actions of the Social Schools integration: local read marks and the opened post.
 
 ``markeer_gelezen`` and ``markeer_alles_gelezen`` only change bookkeeping inside
-Home Assistant; nothing is sent to Social Schools.  ``open_bericht`` fetches one
-post with the whitelisted ``GET communityposts/{id}``.  Without a ``persoon``
-the person is the one whose ``user_id`` matches the user that called the action.
+Home Assistant; nothing is sent to Social Schools.  ``open_bericht`` shows a feed
+post as the feed has it; only a post that has dropped out of the feed (or whose
+feed text looks cut off) is fetched with the whitelisted ``GET communityposts/{id}``.
+Without a ``persoon`` the person is the one whose ``user_id`` matches the user
+that called the action.
 """
 
 from __future__ import annotations
@@ -70,6 +72,22 @@ def _find_post(hass: HomeAssistant, post_id: int) -> tuple[SocialSchoolsCoordina
     raise _error("unknown_post", post_id=str(post_id))
 
 
+def _locate_post(hass: HomeAssistant, post_id: int) -> tuple[SocialSchoolsCoordinator, School]:
+    """Return the entry and school of ``post_id`` for opening, or raise ``unknown_post``.
+
+    Every current feed is searched first (opening a feed post costs no request); only
+    then the posts that have dropped out of a feed since.
+    """
+    coordinators = _coordinators(hass)
+    for coordinator in coordinators:
+        if (found := coordinator.find_post(post_id)) is not None:
+            return coordinator, found[0]
+    for coordinator in coordinators:
+        if (school := coordinator.find_earlier_post(post_id)) is not None:
+            return coordinator, school
+    raise _error("unknown_post", post_id=str(post_id))
+
+
 def _person_name(hass: HomeAssistant, person: str) -> str:
     """Return the friendly name of a person entity, or its entity id."""
     state = hass.states.get(person)
@@ -124,14 +142,15 @@ def async_setup_services(hass: HomeAssistant) -> None:
                 await coordinator.async_mark_read(school_data.school.id, post_ids, person, True)
 
     async def open_post(call: ServiceCall) -> None:
-        coordinator, school, post = _find_post(hass, call.data[FIELD_POST_ID])
+        post_id = call.data[FIELD_POST_ID]
+        coordinator, school = _locate_post(hass, post_id)
         try:
-            await coordinator.async_open_post(school, post.id)
+            await coordinator.async_open_post(school, post_id)
         except (SocialSchoolsError, ValueError) as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="open_failed",
-                translation_placeholders={"post_id": str(post.id)},
+                translation_placeholders={"post_id": str(post_id)},
             ) from err
 
     hass.services.async_register(DOMAIN, SERVICE_MARK_READ, mark_read, schema=SCHEMA_MARK_READ)
