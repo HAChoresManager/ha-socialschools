@@ -249,7 +249,11 @@ async def test_children_names_never_leave_the_account_payload(
     hass_storage: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The connected children of the profile reach no state, store, diagnostics or log line."""
+    """A connected child without groups matches no post, so its name reaches no state.
+
+    No child name ever reaches the store, the diagnostics or a log line; a child with
+    groups appears only in the ``kinderen`` attributes (tests/test_children_account.py).
+    """
     assert "Private Child" in json.dumps(api_state.account)
     caplog.set_level(logging.DEBUG)
     await setup_integration(hass, mock_config_entry)

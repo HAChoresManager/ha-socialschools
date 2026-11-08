@@ -1,14 +1,16 @@
-"""Which child a post is about, from the ``kinderen`` option (HA-free).
+"""Which child a post is about (HA-free).
 
-The option holds one line per child, ``Naam=groep, groep``.  A post belongs to
-a child when one of the post's group names equals one of the child's groups
-exactly (whitespace collapsed, case ignored), so ``Neo 4/5/6`` never counts as
-``6A``.
+The children and their groups come from the account (the parent role's
+``connections[].groups``, see ``models.parse_connected_children``) and from the
+``kinderen`` option, one line per child, ``Naam=groep, groep``, which completes
+and overrides the account (``merge_children``).  A post belongs to a child when
+one of the post's group names equals one of the child's groups exactly
+(whitespace collapsed, case ignored), so ``Neo 4/5/6`` never counts as ``6A``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from .const import SCHOOLWIDE_GROUP_THRESHOLD
@@ -47,6 +49,34 @@ def parse_children(text: str) -> tuple[Child, ...]:
             order.append(name)
         merged[name] |= groups
     return tuple(Child(name=name, groups=frozenset(merged[name])) for name in order)
+
+
+def child_from_account(name: str, groups: Iterable[str]) -> Child | None:
+    """Return the Child for a child of the account, or None without a name or a group."""
+    normalised = frozenset(normalise_group(group) for group in groups if group.strip())
+    name = " ".join(name.split())
+    return Child(name=name, groups=normalised) if name and normalised else None
+
+
+def merge_children(account: Sequence[Child], option: Sequence[Child]) -> tuple[Child, ...]:
+    """Return the children of the account with the ``kinderen`` option applied.
+
+    The option completes and overrides the account: a line for a child of the account
+    (the same name, compared without case and extra spaces) replaces that child's groups
+    and spelling; any other line adds a child.  Account children keep their order and
+    added children follow in option order.
+    """
+    merged = list(account)
+    for child in option:
+        key = normalise_group(child.name)
+        index = next(
+            (i for i, existing in enumerate(merged) if normalise_group(existing.name) == key), None
+        )
+        if index is None:
+            merged.append(child)
+        else:
+            merged[index] = child
+    return tuple(merged)
 
 
 def children_for(groups: Sequence[str], children: Sequence[Child]) -> tuple[str, ...]:

@@ -64,8 +64,8 @@ weten doe je dat alleen bij Social Schools zelf.
    *Add*.
 3. Zoek "Social Schools" in HACS, *Download*, en herstart Home Assistant.
 
-Elke versie heeft een release met een tag (`v0.2.1`, `v0.2.0`, …), zodat HACS het
-versienummer toont en je een versie kunt kiezen in plaats van een commit van `main`. Welke
+Elke versie vanaf 0.2.1 heeft een release met een tag (`v0.2.1`, `v0.2.2`, …), zodat HACS
+het versienummer toont en je een versie kunt kiezen in plaats van een commit van `main`. Welke
 versie je draait, zie je in HACS en onder *Instellingen → Apparaten & diensten → Social Schools*.
 
 ### Handmatig
@@ -104,7 +104,7 @@ ouderrol is gevonden.
 | Agendahorizon (dagen) | 90 | 7 – 365 | hoe ver vooruit de agenda wordt opgehaald |
 | Berichten in het lijstattribuut | 10 | 1 – 20 | lengte van het attribuut `berichten` |
 | Lezers | geen | personen | wie een bericht gelezen moet hebben voordat het niet meer "nieuw" is (zie [Gelezen per persoon](#gelezen-per-persoon)) |
-| Kinderen en groepen | leeg | tekst | één regel per kind, bijvoorbeeld `Kind=6A` of `Kind=1/2A, 1/2B` (zie [Kinderen per bericht](#kinderen-per-bericht)) |
+| Kinderen en groepen | leeg | tekst | aanvulling op de kinderen uit je account: één regel per kind, bijvoorbeeld `Kind=6A` of `Kind=1/2A, 1/2B` (zie [Kinderen per bericht](#kinderen-per-bericht)) |
 
 Een wijziging wordt direct toegepast (de integratie herlaadt). De agenda wordt los van het
 berichteninterval elk uur ververst.
@@ -158,7 +158,7 @@ elk met:
 |---|---|
 | `post_id`, `titel`, `groep`, `auteur`, `geplaatst` | als bij het laatste bericht (titel en groep max. 120 tekens) |
 | `tekst_kort` | de eerste 300 tekens van de tekst |
-| `kinderen` | namen van de kinderen voor wie het bericht is (uit de optie *Kinderen en groepen*) |
+| `kinderen` | voornamen van de kinderen voor wie het bericht is (uit je account en de optie *Kinderen en groepen*) |
 | `schoolbreed` | `true` voor een bericht voor (een groot deel van) de school |
 | `url` | deeplink naar het bericht in de webapp: `https://app.socialschools.eu/communityposts/<post_id>` |
 | `gelezen_door` | namen van de lezers die het bericht gelezen hebben |
@@ -285,19 +285,32 @@ data:
 
 ## Kinderen per bericht
 
-Met de optie **Kinderen en groepen** koppel je berichten aan je kinderen. Eén regel per kind:
-de naam, `=`, en de groepen gescheiden door komma's, bijvoorbeeld:
+Berichten worden **automatisch** aan je kinderen gekoppeld. Je Social Schools-account noemt bij
+je ouderrol elk kind met zijn groepen (bijvoorbeeld `6A`); de integratie zet bij elk bericht in
+een van die groepen de voornaam van het kind in `kinderen`. Een bericht hoort bij een kind als
+een van de groepen van het bericht precies gelijk is aan een groep van het kind (hoofdletters en
+extra spaties tellen niet), dus `Neo 4/5/6` telt niet als `6A`. `schoolbreed` is `true` als het
+bericht in meer dan drie groepen staat of in geen enkele groep van een kind (zoals
+`Schoolnieuws`).
+
+De kinderen en hun groepen worden elke dag opnieuw uit het account gehaald (één extra
+leesaanvraag per dag). Een nieuwe groep na de zomer of een kind dat naar school gaat, komt er
+dus vanzelf bij, zonder herstart. Lukt dat ophalen een keer niet, dan blijven de kinderen van de
+vorige keer staan en probeert de integratie het na een uur opnieuw.
+
+De optie **Kinderen en groepen** is een aanvulling en overschrijving. Eén regel per kind: de
+naam, `=`, en de groepen gescheiden door komma's, bijvoorbeeld:
 
 ```text
-Kind Een=6A
-Kind Twee=1/2A, 1/2B
+Kind Een=Neo 4/5/6
+Kind Drie=1/2A, 1/2B
 ```
 
-Een bericht hoort bij een kind als een van de groepen van het bericht precies gelijk is aan een
-groep van het kind (hoofdletters en extra spaties tellen niet), dus `Neo 4/5/6` telt niet als
-`6A`. `schoolbreed` is `true` als het bericht in meer dan drie groepen staat of in geen enkele
-groep van een kind (zoals `Schoolnieuws`). De groepen wisselen elk schooljaar: pas de optie dan
-aan.
+- Een regel voor een kind dat ook in het account staat (dezelfde naam, hoofdletters en spaties
+  tellen niet), **vervangt** diens groepen. Die moet je dan zelf bijhouden; laat zo'n regel
+  dus alleen staan als de groepen uit het account niet kloppen.
+- Een regel voor een ander kind **voegt** dat kind toe.
+- Klopt de automatische koppeling, laat de optie dan leeg.
 
 ## Automatiseringen
 
@@ -464,6 +477,10 @@ Wat de uitkomst betekent:
 - De attributen `tekst` en `bijlagen` van *Geopend bericht* gaan, net als bij het laatste bericht,
   niet in de recorder-database. Diagnostische gegevens tonen van lezers en kinderen alleen het
   aantal.
+- De voornamen van je kinderen uit het account komen, net als namen uit de optie *Kinderen en
+  groepen*, alleen in de attributen `kinderen`; ze worden niet in `.storage` bewaard en niet
+  gelogd. Waar `kinderen` in de recorder komt (het event en *Geopend bericht*), staat ook de
+  voornaam in de geschiedenis.
 - De integratie logt zelf nooit wachtwoorden, tokens, cookies, antwoorden van de API, namen of
   berichtteksten, ook niet op debugniveau; in haar eigen logregels wordt de configuratie bij het
   entry-id genoemd. Foutmeldingen bevatten alleen de soort fout en de HTTP-status. Home Assistant
@@ -490,7 +507,8 @@ Wat de uitkomst betekent:
   buiten dat venster geeft `calendar.get_events` niets terug.
 - Het aantal aanvragen blijft ruim onder **20 per uur per school**: bij het standaardinterval
   4 feed-aanvragen en 1 agenda-aanvraag per uur per school, plus ongeveer één tokenverversing per
-  uur per account en één accountaanvraag bij het opstarten. Bij het minimum van 10 minuten zijn
+  uur per account en één accountaanvraag bij het opstarten en daarna één per dag (voor de
+  kinderen en hun groepen). Bij het minimum van 10 minuten zijn
   het 7 aanvragen per uur per school. Berichtdetails worden standaard niet opgehaald, ook niet
   door `open_bericht` voor een bericht dat in de feed staat.
 - Alleen **ouderrollen**; andere rollen worden overgeslagen.

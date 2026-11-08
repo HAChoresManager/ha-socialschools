@@ -171,7 +171,7 @@ class SocialSchoolsPostCountSensor(LocalUpdatesEntity, SensorEntity):
         """Return the newest posts, limited by the option and then by ATTRIBUTES_BYTE_BUDGET."""
         if (data := self.school_data) is None:
             return None
-        children = self.coordinator.children
+        children = self.coordinator.children_for(self._school_id)
         posts = [
             post_summary(post, children) | self.read_fields(post)
             for post in data.posts[: self._posts_in_list]
@@ -215,7 +215,7 @@ class SocialSchoolsUnreadSensor(LocalUpdatesEntity, SensorEntity):
             for person in to_read:
                 per_person[person] += 1
             if to_read and first is None:
-                summary = post_summary(post, coordinator.children)
+                summary = post_summary(post, coordinator.children_for(self._school_id))
                 summary.pop(ATTR_SHORT_TEXT)
                 summary[ATTR_TO_READ] = [person_name(self.hass, person) for person in to_read]
                 first = summary
@@ -268,7 +268,7 @@ class SocialSchoolsOpenPostSensor(LocalUpdatesEntity, SensorEntity):
         attributes: dict[str, Any] = {
             ATTR_POST_ID: post.id,
             ATTR_GROUP: truncate(", ".join(post.groups), MAX_GROUP_LENGTH)[0],
-            **child_fields(post, self.coordinator.children),
+            **child_fields(post, self.coordinator.children_for(self._school_id)),
             ATTR_AUTHOR: truncate(post.author, MAX_AUTHOR_LENGTH)[0],
             ATTR_POSTED: posted_at(post),
             ATTR_TEXT: text,

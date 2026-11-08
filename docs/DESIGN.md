@@ -61,7 +61,7 @@ meta-path finder that raises on any `homeassistant` import.
 
 ```python
 DOMAIN = "socialschools"
-VERSION = "0.2.1"                       # must equal manifest.json "version" (tested)
+VERSION = "0.2.2"                       # must equal manifest.json "version" (tested)
 USER_AGENT = f"HomeAssistant-SocialSchools/{VERSION}"
 
 OIDC_ISSUER = "https://login.socialschools.eu"
@@ -110,6 +110,8 @@ MAX_POSTS_IN_LIST = 20
 
 CALENDAR_LOOKBACK_DAYS = 7
 CALENDAR_REFRESH_INTERVAL = timedelta(hours=1)
+ACCOUNT_REFRESH_INTERVAL = timedelta(days=1)   # children and their groups (0.2.2, §18)
+ACCOUNT_RETRY_INTERVAL = timedelta(hours=1)    # after a failed account fetch
 POST_COUNT_WINDOW = timedelta(days=7)
 SCHOOL_TIMEZONE = "Europe/Amsterdam"
 
@@ -872,7 +874,9 @@ compile step):
   per child, `Naam=groep, groep`; ValueError with the line number otherwise),
   `children_for(groups, children)` matches group names exactly after collapsing
   whitespace and case folding, `is_schoolwide(groups, children)` is True for more
-  than `SCHOOLWIDE_GROUP_THRESHOLD` (3) groups or when no child matches.
+  than `SCHOOLWIDE_GROUP_THRESHOLD` (3) groups or when no child matches. Since
+  0.2.2 the children also come from the account (§18): `child_from_account` and
+  `merge_children`.
 
 "Read" is local bookkeeping only. Nothing about it is sent to Social Schools:
 no new whitelist paths, no statistics or read-receipt calls. The store goes to
@@ -934,9 +938,8 @@ adds `gelezen_door`, `nog_lezen`, `nieuw`.
   the open cache). An id found nowhere is `unknown_post`, before any request.
   `markeer_gelezen` still accepts feed posts only.
 * **Children.** `scripts/probe.py --kinderen-vorm` describes the groups of the
-  children against the feed (§13). An automatic link between posts and children is
-  not built yet: it waits for the outcome of that probe. The `kinderen` option stays
-  the way to link them.
+  children against the feed (§13). Its live outcome led to the automatic link of
+  0.2.2 (§18).
 * **Releases.** `.github/workflows/release.yml` runs on every push to `main` (and on a
   manual run, on `main` only) with `permissions: contents: write`, only
   `actions/checkout` (pinned, `fetch-depth: 0`, `persist-credentials: false`) and the
@@ -944,7 +947,6 @@ adds `gelezen_door`, `nog_lezen`, `nieuw`.
   required checks. It runs `python3 scripts/release.py`:
 
   ```python
-  BACKFILL_VERSIONS = ("0.2.0",)          # versions from before the workflow, tagged once
   def manifest_version(text: str) -> str                    # "x.y.z", else ReleaseError
   def changelog_section(text: str, version: str) -> str     # body of "## [version] - date", up to
                                                             # the next "## " or a link definition;
@@ -956,10 +958,57 @@ adds `gelezen_door`, `nog_lezen`, `nieuw`.
   def run(repo, *, dry_run=False) -> int
   ```
 
-  For the backfill versions and then the manifest version, a version whose tag
-  `v<version>` exists is skipped; otherwise `gh release create v<version> --target
-  <commit> --title v<version> --notes-file <section> --latest=<only the manifest
-  version>`. A version without a commit on the branch or without its changelog
-  section is not released and fails the run (`::error::`), as does a refused tag,
-  with a pointer to tag rulesets: "Restrict creations" on a tag ruleset that covers
-  `v*` blocks the `GITHUB_TOKEN`, which cannot be put on a bypass list.
+  When the tag `v<version>` of the manifest version exists, nothing happens;
+  otherwise `gh release create v<version> --target <commit> --title v<version>
+  --notes-file <section> --latest=true`. A version without a commit on the branch or
+  without its changelog section is not released and fails the run (`::error::`), as
+  does a refused tag. The message names the two known causes:
+  * GitHub refuses the `GITHUB_TOKEN` a tag on a commit whose `.github/workflows`
+    differ from those of `main` (HTTP 403 "Resource not accessible by integration");
+    the token cannot get that permission. This is why older versions are not tagged
+    afterwards: 0.2.1 tried `v0.2.0` on `e81245d` and got exactly this, while `v0.2.1`
+    on the merge commit (the tip of `main`) succeeded in the same run (0.2.2 dropped
+    that backfill);
+  * "Restrict creations" on a tag ruleset that covers `v*`; the `GITHUB_TOKEN` cannot
+    be put on a bypass list. The live rulesets do not block it.
+
+## 18. Version 0.2.2: children from the account
+
+`scripts/probe.py --kinderen-vorm` on the live account (8 November 2026): one parent
+role with one connection; `connections[0].groups[0]` is a string (a group name); a
+group name of the child equals a `communities[].name` for 16 of the 20 feed posts;
+`groupId`, community `id` and `yearClass` match nothing.
+
+* **models.py** (pure):
+
+  ```python
+  @dataclass(frozen=True)
+  class ConnectedChild:
+      name: str                 # firstName, else displayName (whitespace-collapsed)
+      groups: tuple[str, ...]   # connections[].groups names, collapsed, in order, de-duplicated
+  def parse_connected_children(data: Any) -> dict[int, tuple[ConnectedChild, ...]]
+      # per school id of every role of type ROLE_TYPE_PARENT; connections without a name are
+      # skipped; a group is a string or an object with a string "name"; a child listed under two
+      # parent roles of one school gets the groups of both; unusable input → {} (never raises)
+  ```
+
+* **children.py** (pure): `child_from_account(name, groups) -> Child | None` (groups
+  normalised like the option; None without a name or a group) and
+  `merge_children(account, option) -> tuple[Child, ...]`: a line of the option for a
+  child of the account (names compared with `normalise_group`) replaces that child's
+  groups and spelling, any other line adds a child; account children keep their
+  order, added ones follow in option order.
+* **Coordinator.** `async_setup_entry` passes `parse_connected_children(raw account)`
+  as `connected`. `children_for(school_id)` is `merge_children(account children of the
+  school, option_children)`; every entity (post list, unread `eerste`, opened post,
+  new-post event) uses it, so `kinderen` and `schoolbreed` follow the account.
+  `schoolbreed` keeps its rule. Once every `ACCOUNT_REFRESH_INTERVAL` the update
+  fetches `useraccounts/current` again (whitelisted, GET) before the feeds and
+  replaces the account children; `CannotConnect`/`ApiError` keep the previous
+  children and retry after `ACCOUNT_RETRY_INTERVAL` (warning once, then debug);
+  `InvalidAuth` propagates as for the other requests. Schools and entities are not
+  changed by this refresh.
+* **Privacy.** Names reach only the `kinderen` attributes, as names from the option
+  do. The store holds no names; diagnostics show `child_count` (option lines) and
+  `account_child_count` (children with groups); log lines carry counts and the entry
+  id only.

@@ -18,7 +18,7 @@ from .client import SocialSchoolsClient
 from .const import CONF_CLIENT_ID, CONF_REFRESH_TOKEN, DOMAIN, STORAGE_KEY_TEMPLATE, STORAGE_VERSION
 from .coordinator import SocialSchoolsCoordinator, SocialSchoolsStore
 from .errors import ApiError, CannotConnect, InvalidAuth
-from .models import parse_account
+from .models import parse_account, parse_connected_children
 from .services import async_setup_services
 from .tokens import TokenManager
 
@@ -69,7 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: SocialSchoolsConfigEntry
     )
     client = SocialSchoolsClient(session, token_manager)
     try:
-        account = parse_account(await client.async_get_current_account())
+        raw_account = await client.async_get_current_account()
+        account = parse_account(raw_account)
     except InvalidAuth as err:
         raise ConfigEntryAuthFailed("The stored Social Schools login is no longer valid") from err
     except (CannotConnect, ApiError) as err:
@@ -77,7 +78,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: SocialSchoolsConfigEntry
     if not account.schools:
         raise ConfigEntryError(translation_domain=DOMAIN, translation_key="no_parent_role")
 
-    coordinator = SocialSchoolsCoordinator(hass, entry, client, account, _create_store(hass, entry))
+    coordinator = SocialSchoolsCoordinator(
+        hass,
+        entry,
+        client,
+        account,
+        _create_store(hass, entry),
+        connected=parse_connected_children(raw_account),
+    )
     await coordinator.async_load_store()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator

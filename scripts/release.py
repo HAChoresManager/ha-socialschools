@@ -7,14 +7,16 @@ repository root of a checkout with the full history::
     python3 scripts/release.py              # create what is missing
     python3 scripts/release.py --dry-run    # only print what would be created
 
-For the version in ``custom_components/socialschools/manifest.json``, and once for
-each version in ``BACKFILL_VERSIONS`` (released before this workflow existed), it
-checks whether the tag ``v<version>`` exists.  When it does not, it finds the commit
-at which that version arrived on ``main`` (the oldest commit of the newest run of
-first-parent commits whose manifest carries it: for a merged pull request the merge
-commit), takes the section of that version from ``CHANGELOG.md`` and creates the tag
-and the release with the ``gh`` CLI (``GH_TOKEN`` must be set).  Only the version in
-the manifest is marked as the latest release.
+For the version in ``custom_components/socialschools/manifest.json`` it checks
+whether the tag ``v<version>`` exists.  When it does not, it finds the commit at which
+that version arrived on ``main`` (the oldest commit of the newest run of first-parent
+commits whose manifest carries it: for a merged pull request the merge commit), takes
+the section of that version from ``CHANGELOG.md`` and creates the tag and the release,
+marked as the latest, with the ``gh`` CLI (``GH_TOKEN`` must be set).
+
+Older versions are not tagged afterwards: GitHub refuses the ``GITHUB_TOKEN`` a tag on
+a commit whose ``.github/workflows`` differ from those of ``main`` (HTTP 403, "Resource
+not accessible by integration"), and the token cannot get the permission for that.
 
 Only the standard library; it runs on the Python 3.12 of the GitHub runner.
 """
@@ -22,7 +24,7 @@ Only the standard library; it runs on the Python 3.12 of the GitHub runner.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 import json
 import os
 from pathlib import Path
@@ -34,16 +36,15 @@ import tempfile
 MANIFEST = "custom_components/socialschools/manifest.json"
 CHANGELOG = "CHANGELOG.md"
 TAG_PREFIX = "v"
-BACKFILL_VERSIONS: tuple[str, ...] = ("0.2.0",)
-"""Versions from before this workflow; each is tagged once, where it arrived on main."""
 
 _VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 _SECTION_RE = re.compile(r"## \[(?P<version>[^\]]+)\](?:\s+-\s+.*)?")
 _LINK_DEFINITION_RE = re.compile(r"\[[^\]]+\]:\s")
-RULESET_HINT = (
-    "Wordt het aanmaken van de tag geweigerd ('Repository rule violations', 'creations "
-    "being restricted'), kijk dan bij Settings > Rules > Rulesets naar een ruleset voor "
-    "tags met 'Restrict creations' die v* dekt."
+REFUSED_HINT = (
+    "'Resource not accessible by integration' (HTTP 403) betekent meestal dat de commit "
+    "andere workflowbestanden heeft dan main: daar mag de GITHUB_TOKEN geen tag maken, "
+    "maak hem dan met de hand. 'Repository rule violations' wijst op een ruleset voor tags "
+    "met 'Restrict creations' die v* dekt (Settings > Rules > Rulesets)."
 )
 
 
@@ -138,8 +139,8 @@ def tag_exists(repo: Path, tag: str) -> bool:
     return result.returncode == 0
 
 
-def create_release(repo: Path, tag: str, commit: str, notes: str, *, latest: bool) -> None:
-    """Create the tag on ``commit`` and its release with the gh CLI."""
+def create_release(repo: Path, tag: str, commit: str, notes: str) -> None:
+    """Create the tag on ``commit`` and its release, marked as the latest, with the gh CLI."""
     with tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False) as file:
         file.write(notes)
         notes_path = file.name
@@ -154,7 +155,7 @@ def create_release(repo: Path, tag: str, commit: str, notes: str, *, latest: boo
         tag,
         "--notes-file",
         notes_path,
-        f"--latest={'true' if latest else 'false'}",
+        "--latest=true",
     ]
     if repository := os.environ.get("GITHUB_REPOSITORY"):
         command += ["--repo", repository]
@@ -163,41 +164,30 @@ def create_release(repo: Path, tag: str, commit: str, notes: str, *, latest: boo
     finally:
         Path(notes_path).unlink(missing_ok=True)
     if result.returncode != 0:
-        raise ReleaseError(f"gh release create {tag} mislukte. {RULESET_HINT}")
-
-
-def versions_to_release(current: str, backfill: Sequence[str] = BACKFILL_VERSIONS) -> list[str]:
-    """Return the backfill versions and then the current one, without duplicates."""
-    return list(dict.fromkeys([*backfill, current]))
+        raise ReleaseError(f"gh release create {tag} mislukte. {REFUSED_HINT}")
 
 
 def run(repo: Path, *, dry_run: bool = False) -> int:
-    """Create every missing tag and release; return the exit code."""
-    current = manifest_version((repo / MANIFEST).read_text(encoding="utf-8"))
-    changelog = (repo / CHANGELOG).read_text(encoding="utf-8")
-    history = first_parent_history(repo)
-    failures = 0
-    for version in versions_to_release(current):
-        tag = f"{TAG_PREFIX}{version}"
-        if tag_exists(repo, tag):
-            print(f"{tag}: bestaat al")
-            continue
-        try:
-            commit = release_commit(history, version)
-            if commit is None:
-                raise ReleaseError(f"geen commit op deze branch met versie {version}")
-            notes = changelog_section(changelog, version)
-            latest = version == current
-            if dry_run:
-                print(f"{tag}: zou worden aangemaakt op {commit} (latest: {latest})")
-                continue
-            create_release(repo, tag, commit, notes, latest=latest)
-        except ReleaseError as err:
-            print(f"::error::{tag}: {err}")
-            failures += 1
-            continue
-        print(f"{tag}: aangemaakt op {commit}")
-    return 1 if failures else 0
+    """Create the tag and release of the manifest version when missing; return the exit code."""
+    version = manifest_version((repo / MANIFEST).read_text(encoding="utf-8"))
+    tag = f"{TAG_PREFIX}{version}"
+    if tag_exists(repo, tag):
+        print(f"{tag}: bestaat al")
+        return 0
+    try:
+        commit = release_commit(first_parent_history(repo), version)
+        if commit is None:
+            raise ReleaseError(f"geen commit op deze branch met versie {version}")
+        notes = changelog_section((repo / CHANGELOG).read_text(encoding="utf-8"), version)
+        if dry_run:
+            print(f"{tag}: zou worden aangemaakt op {commit}")
+            return 0
+        create_release(repo, tag, commit, notes)
+    except ReleaseError as err:
+        print(f"::error::{tag}: {err}")
+        return 1
+    print(f"{tag}: aangemaakt op {commit}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

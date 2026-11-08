@@ -72,6 +72,14 @@ class Post:
 
 
 @dataclass(frozen=True)
+class ConnectedChild:
+    """A child connected to a parent role, with its group names as the account lists them."""
+
+    name: str  # firstName, else displayName
+    groups: tuple[str, ...]  # connections[].groups names, whitespace-collapsed, de-duplicated
+
+
+@dataclass(frozen=True)
 class SchoolEvent:
     """One calendar event; all-day events use dates with an exclusive end."""
 
@@ -185,6 +193,55 @@ def parse_account(data: Any) -> Account:
         display_name=_as_text(data.get("displayName")),
         schools=tuple(schools.values()),
     )
+
+
+def _group_names(value: Any) -> tuple[str, ...]:
+    """Collect the group names of a connection: strings, or objects with a ``name``."""
+    names: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            name = _as_text(item.get("name")) if isinstance(item, Mapping) else _as_text(item)
+            if name and name not in names:
+                names.append(name)
+    return tuple(names)
+
+
+def parse_connected_children(data: Any) -> dict[int, tuple[ConnectedChild, ...]]:
+    """Return the children of the parent roles in ``useraccounts/current``, keyed by school id.
+
+    A child is a ``connections[]`` entry of a role of type ROLE_TYPE_PARENT; its name is
+    ``firstName`` (else ``displayName``) and its groups are the names in ``groups``
+    (strings in the live account).  Connections without a name are skipped, and a child
+    listed under two parent roles of one school gets the groups of both.  Anything
+    unusable yields no children, never an error: the ``kinderen`` option still works.
+    """
+    found: dict[int, dict[str, list[str]]] = {}
+    roles = data.get("roles") if isinstance(data, Mapping) else None
+    for role in roles if isinstance(roles, list) else []:
+        if not isinstance(role, Mapping) or _as_int(role.get("type")) != ROLE_TYPE_PARENT:
+            continue
+        school = role.get("school")
+        school_id = _as_int(school.get("id")) if isinstance(school, Mapping) else None
+        if school_id is None:
+            continue
+        per_school = found.setdefault(school_id, {})
+        connections = role.get("connections")
+        for connection in connections if isinstance(connections, list) else []:
+            if not isinstance(connection, Mapping):
+                continue
+            name = _as_text(connection.get("firstName")) or _as_text(connection.get("displayName"))
+            if not name:
+                continue
+            groups = per_school.setdefault(name, [])
+            groups.extend(
+                group for group in _group_names(connection.get("groups")) if group not in groups
+            )
+    return {
+        school_id: tuple(
+            ConnectedChild(name=name, groups=tuple(groups)) for name, groups in per_school.items()
+        )
+        for school_id, per_school in found.items()
+    }
 
 
 def parse_post(data: Mapping[str, Any]) -> Post:

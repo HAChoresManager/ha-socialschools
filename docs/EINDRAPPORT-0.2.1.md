@@ -1,7 +1,9 @@
 # Eindrapport: Social Schools voor Home Assistant 0.2.1
 
 Datum: 2026-11-08. Branch `claude/bold-franklin-ok3whj`, pull request naar `main`.
-Het rapport van 0.1.0 staat in [`EINDRAPPORT.md`](EINDRAPPORT.md).
+Het rapport van 0.1.0 staat in [`EINDRAPPORT.md`](EINDRAPPORT.md). Wat er na de merge van
+0.2.1 gebeurde (de live probe, de koppeling in 0.2.2 en `v0.2.0`), staat onder
+[Vervolg: 0.2.2](#vervolg-022).
 
 ## Samenvatting
 
@@ -9,8 +11,8 @@ Het rapport van 0.1.0 staat in [`EINDRAPPORT.md`](EINDRAPPORT.md).
 |---|---|
 | 1. Hele-dag-items één dag te lang | Opgelost en getest op de zes live vormen plus varianten. |
 | 2. `open_bericht` zonder extra verzoek | Een bericht uit de feed kost nul verzoeken; alleen een bericht buiten de feed (of met een teken van inkorten) wordt één keer opgehaald. |
-| 3. Kinderen automatisch koppelen | Probe uitgebreid. De automatische koppeling is **niet gebouwd**: de uitkomst van de nieuwe probe is nog niet bekend (zie §3). |
-| 4. Releases | Workflow en script klaar; na de merge ontstaan `v0.2.0` (op de merge-commit van 0.2.0) en `v0.2.1`. |
+| 3. Kinderen automatisch koppelen | Probe uitgebreid in 0.2.1. De live probe vond een koppeling op groepsnaam; de automatische koppeling is gebouwd in 0.2.2 (zie Vervolg). |
+| 4. Releases | Workflow en script klaar. `v0.2.1` is na de merge aangemaakt; `v0.2.0` bleek niet te kunnen en is losgelaten (zie Vervolg). |
 | 5. Afronding | Versie 0.2.1, CHANGELOG, README, DESIGN; 1090 tests groen op Python 3.14, controles op Python 3.12 groen. |
 
 ## 1. Agenda: hele dagen
@@ -139,14 +141,11 @@ De oude regels "Overlap met …" heten nu "Overlap van die id's met …". Ze ver
 id's onder de paden bij "Gevonden onder" en zijn dus niet te verwarren met het nieuwe
 groupId-antwoord.
 
-**Uitkomst: nog niet bekend.** De probe heeft echte inloggegevens nodig, en die zijn er in deze
-ontwikkelomgeving niet. Daarom is hij hier niet live gedraaid.
+**Uitkomst bij het opleveren van 0.2.1: nog niet bekend.** De probe heeft echte inloggegevens
+nodig, en die waren er in de ontwikkelomgeving niet. Na de merge is hij live gedraaid; de
+uitkomst en de koppeling die daarop volgde, staan onder [Vervolg: 0.2.2](#vervolg-022).
 
-**Automatische koppeling: niet gebouwd.** Volgens de brief komt die er alleen als een koppeling
-werkt, en dat is nog niet vastgesteld. De optie `kinderen` (`Kind=6A`) blijft voorlopig de manier
-om berichten aan kinderen te koppelen; `schoolbreed` is ongewijzigd.
-
-**Zo lees je de uitkomst:**
+**Zo lees je de uitkomst** (de handleiding zoals die bij 0.2.1 hoorde):
 
 - `groupId … ja, bij N van M berichten (via groups[].X)`, waarbij N ongeveer gelijk is aan het
   aantal berichten voor de groep van het kind: de koppeling werkt via veld `X`. Dan is de
@@ -167,14 +166,14 @@ om berichten aan kinderen te koppelen; `schoolbreed` is ongewijzigd.
 starten kan ook, maar alleen op `main`. De workflow draait `scripts/release.py`:
 
 1. Hij leest de versie uit `custom_components/socialschools/manifest.json`.
-2. Voor die versie, en eenmalig voor 0.2.0 (`BACKFILL_VERSIONS`), kijkt hij of tag `v<versie>`
-   bestaat. Bestaat de tag al, dan gebeurt er niets.
+2. Voor die versie kijkt hij of tag `v<versie>` bestaat. Bestaat de tag al, dan gebeurt er
+   niets. (In 0.2.1 deed hij dat ook eenmalig voor 0.2.0; dat is in 0.2.2 vervallen, zie Vervolg.)
 3. Bestaat de tag nog niet, dan zoekt hij de commit waarmee de versie op `main` kwam. Dat is de
    oudste commit in de nieuwste reeks eerste-oudercommits die die versie dragen; bij een
    gemergede pull request is dat de merge-commit.
 4. Hij neemt de sectie `## [<versie>] - …` uit `CHANGELOG.md` als tekst.
-5. Hij maakt met `gh release create v<versie> --target <commit>` de tag en de release. Alleen de
-   versie uit het manifest wordt *latest*.
+5. Hij maakt met `gh release create v<versie> --target <commit>` de tag en de release, als
+   *latest*.
 6. Ontbreekt de changelog-sectie, of wordt de tag geweigerd, dan faalt de run met een duidelijke
    melding (`::error::`) en komt er geen lege release.
 
@@ -183,22 +182,18 @@ volledige geschiedenis en zonder bewaarde inloggegevens) en de `gh`-CLI met de `
 draait nooit op pull requests en zit dus niet in de verplichte checks. De validatieworkflow
 compileert het script wel met Python 3.12, de Python van de runner.
 
-**Na de merge van deze PR** maakt de eerste run:
-
-- `v0.2.0` op `e81245dfdf166362f24cceaab31b9fd633b6504f` ("Merge pull request #1 …
-  feat/0.2.0"), niet als latest;
-- `v0.2.1` op de merge-commit van deze PR, als latest.
-
-`python3 scripts/release.py --dry-run` laat dit vooraf zien; op `main` van nu geeft hij
-`v0.2.0: zou worden aangemaakt op e81245d…`. Daarna toont HACS versies (`v0.2.1`, `v0.2.0`) in
-plaats van een commit van `main`.
+**Na de merge van 0.2.1** maakte de eerste run `v0.2.1` op de merge-commit (`9c8202f`), als
+latest. HACS toont sindsdien versies in plaats van een commit van `main`. De eenmalige poging
+voor `v0.2.0` op `e81245d` mislukte; zie Vervolg. `python3 scripts/release.py --dry-run` laat
+vooraf zien wat een run zou doen.
 
 `v0.1.0` krijgt bewust geen tag. Die versie bewaart haar gegevens in opslagversie 1 en kan de
 opslag van 0.2 (versie 2) niet lezen, dus terugzetten via HACS zou de integratie breken.
 
-**Rulesets.** De rulesets kon ik vanuit deze omgeving niet inzien: de beschikbare GitHub-tools
-geven geen toegang tot de repo-instellingen. Wel is te zien dat `main` beschermd is, en dat er nog
-geen enkele tag of release bestaat. Wat de rulesets wel en niet tegenhouden:
+**Rulesets.** De rulesets zelf kon ik vanuit deze omgeving niet inzien. De run na de merge geeft
+nu wel het antwoord: **de rulesets houden het aanmaken van tags door de workflow niet tegen**,
+want `v0.2.1` is in die run gewoon aangemaakt. Wat de rulesets in het algemeen wel en niet
+tegenhouden:
 
 - De regels op `main` (PR verplicht, checks hassfest/HACS/tests) houden niets tegen. De workflow
   pusht niets naar `main` en maakt alleen via de API een tag.
@@ -254,3 +249,46 @@ Wil je de nieuwe probe al vóór de merge draaien, zet dan in de tweede regel
 De probe vraagt e-mail en wachtwoord en drukt alleen veldnamen, typen, ja/nee en aantallen af.
 Voor de koppeling zijn de regels vanaf `Kinderen-vorm:` nodig; die bevatten geen namen en geen
 id's.
+
+## Vervolg: 0.2.2
+
+**De live probe** (8 november 2026, `--kinderen-vorm`) gaf:
+
+```text
+Groepen per connection: 1
+Vorm van roles[0].connections[0].groups[0]: str
+groupId uit de feed in de groepen van een kind: nee
+id uit de feed in de groepen van een kind: nee
+Groepsnaam van een kind gelijk aan een communitynaam in de feed: ja, bij 16 van 20 berichten (via groups[])
+yearClass exact gelijk aan een communitynaam in de feed: nee
+yearClass gelijk zonder verschil in hoofdletters en spaties: nee
+```
+
+De groepen van een kind zijn dus namen, en die komen bij 16 van de 20 berichten overeen met een
+community van het bericht. `groupId` en `yearClass` zijn niet bruikbaar.
+
+**De automatische koppeling is gebouwd in 0.2.2.**
+
+- Per school leest de integratie uit het account de kinderen bij de ouderrol: de voornaam
+  (`firstName`, anders `displayName`) en de groepsnamen (`groups`).
+- Een bericht hoort bij een kind als een van zijn communitynamen gelijk is aan een groep van het
+  kind, met dezelfde vergelijking als de optie (hoofdletters en extra spaties tellen niet).
+  `Neo 4/5/6` telt dus nog steeds niet als `6A`.
+- De optie `kinderen` blijft als aanvulling en overschrijving. Een regel voor een kind uit het
+  account vervangt diens groepen, een regel voor een ander kind voegt het toe. Klopt de koppeling,
+  dan kan de optie leeg. Staat er nog een regel voor een kind dat in het account staat, dan wint
+  die regel, en moet je hem in augustus zelf bijwerken.
+- Het account wordt elke dag opnieuw gelezen (één extra GET op het bestaande pad
+  `useraccounts/current`). Een nieuw schooljaar of een kind dat naar school gaat, komt er zo
+  vanzelf bij, zonder herstart. Mislukt dat lezen, dan blijven de vorige kinderen staan en volgt
+  na een uur een nieuwe poging.
+- `schoolbreed` is ongewijzigd. Namen staan alleen in de attributen `kinderen`, niet in de opslag,
+  de diagnostiek (alleen `account_child_count`) of het log.
+
+**`v0.2.0` is losgelaten.** De run na de merge van 0.2.1 kreeg voor `v0.2.0` "HTTP 403: Resource
+not accessible by integration". GitHub weigert de `GITHUB_TOKEN` een tag op een commit waarvan
+`.github/workflows` afwijkt van `main`, en dat recht kan het token niet krijgen. De commit
+`e81245d` heeft geen `release.yml` en een oudere `validate.yml`. Met de hand aanmaken lukte ook
+niet: de doelkeuze in de webinterface gaat niet verder terug dan de merge van PR 3. Omdat 0.2.0
+verder niet nodig is, maakt de workflow alleen nog de tag van de versie in het manifest, en is
+elke push naar `main` weer groen. Een geweigerde tag noemt nu beide bekende oorzaken.

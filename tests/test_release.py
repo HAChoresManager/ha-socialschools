@@ -117,15 +117,6 @@ def test_the_current_version_has_a_changelog_section() -> None:
     assert "## [" not in body
 
 
-@pytest.mark.parametrize("version", release.BACKFILL_VERSIONS)
-def test_backfill_versions_have_a_changelog_section(version: str) -> None:
-    """Every version that is tagged afterwards has its section too."""
-    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    body = release.changelog_section(text, version)
-    assert body.startswith("### Toegevoegd")
-    assert "## [" not in body
-
-
 def test_changelog_section_stops_at_the_next_heading_and_the_link_definitions() -> None:
     """A section runs to the next ``## `` heading; link definitions below the last are not text."""
     assert release.changelog_section(CHANGELOG, "0.2.1") == NOTES_021
@@ -171,12 +162,6 @@ def test_changelog_section_missing_or_empty(version: str, message: str) -> None:
 def test_release_commit(history: list[tuple[str, str | None]], version: str, expected: str) -> None:
     """The oldest commit of the newest run that carries the version is where it arrived."""
     assert release.release_commit(history, version) == expected
-
-
-def test_versions_to_release() -> None:
-    """Backfill versions come first, so the current version is created last; no duplicates."""
-    assert release.versions_to_release("0.2.1", ("0.2.0",)) == ["0.2.0", "0.2.1"]
-    assert release.versions_to_release("0.2.0", ("0.2.0",)) == ["0.2.0"]
 
 
 # --- end to end in a git repository -----------------------------------------------------------
@@ -286,59 +271,48 @@ def test_history_finds_the_merge_commits(history_repo: tuple[Path, str, str]) ->
     assert release.release_commit(history, "0.2.1") == merge_021
 
 
-def test_run_creates_the_missing_tags_and_releases(
+def test_run_creates_the_release_of_the_manifest_version(
     history_repo: tuple[Path, str, str],
     fake_gh: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """v0.2.0 (not latest) on its merge commit, then v0.2.1 (latest) with their changelog text."""
-    repo, merge_020, merge_021 = history_repo
+    """Only v0.2.1, the manifest version: on its merge commit, latest, with its changelog text.
+
+    Older versions (0.2.0 here) are not tagged afterwards.
+    """
+    repo, _, merge_021 = history_repo
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
     assert release.run(repo) == 0
-    calls = _gh_calls(fake_gh)
-    assert [call["args"][:4] for call in calls] == [
-        ["release", "create", "v0.2.0", "--target"],
-        ["release", "create", "v0.2.1", "--target"],
-    ]
-    first, second = calls
-    assert first["args"][4] == merge_020
-    assert second["args"][4] == merge_021
-    assert SHA_RE.fullmatch(first["args"][4])
-    assert "--latest=false" in first["args"]
-    assert "--latest=true" in second["args"]
-    assert first["args"][first["args"].index("--title") + 1] == "v0.2.0"
-    assert first["args"][-2:] == ["--repo", "owner/repo"]
-    assert first["notes"] == NOTES_020
-    assert second["notes"] == NOTES_021
-    out = capsys.readouterr().out
-    assert f"v0.2.0: aangemaakt op {merge_020}" in out
-    assert f"v0.2.1: aangemaakt op {merge_021}" in out
+    (call,) = _gh_calls(fake_gh)
+    assert call["args"][:5] == ["release", "create", "v0.2.1", "--target", merge_021]
+    assert SHA_RE.fullmatch(call["args"][4])
+    assert "--latest=true" in call["args"]
+    assert call["args"][call["args"].index("--title") + 1] == "v0.2.1"
+    assert call["args"][-2:] == ["--repo", "owner/repo"]
+    assert call["notes"] == NOTES_021
+    assert capsys.readouterr().out.splitlines() == [f"v0.2.1: aangemaakt op {merge_021}"]
 
 
-def test_run_skips_existing_tags(
+def test_run_skips_an_existing_tag(
     history_repo: tuple[Path, str, str], fake_gh: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Once the tags exist (the checkout fetches them), a run creates nothing."""
-    repo, merge_020, merge_021 = history_repo
-    _git(repo, "tag", "v0.2.0", merge_020)
+    """Once the tag exists (the checkout fetches the tags), a run creates nothing."""
+    repo, _, merge_021 = history_repo
     _git(repo, "tag", "v0.2.1", merge_021)
     assert release.run(repo) == 0
     assert _gh_calls(fake_gh) == []
-    assert capsys.readouterr().out.splitlines() == ["v0.2.0: bestaat al", "v0.2.1: bestaat al"]
+    assert capsys.readouterr().out.splitlines() == ["v0.2.1: bestaat al"]
 
 
 def test_dry_run_creates_nothing(
     history_repo: tuple[Path, str, str], fake_gh: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """``--dry-run`` only says what it would create."""
-    repo, merge_020, merge_021 = history_repo
+    repo, _, merge_021 = history_repo
     assert release.main(["--repo", str(repo), "--dry-run"]) == 0
     assert _gh_calls(fake_gh) == []
-    assert capsys.readouterr().out.splitlines() == [
-        f"v0.2.0: zou worden aangemaakt op {merge_020} (latest: False)",
-        f"v0.2.1: zou worden aangemaakt op {merge_021} (latest: True)",
-    ]
+    assert capsys.readouterr().out.splitlines() == [f"v0.2.1: zou worden aangemaakt op {merge_021}"]
 
 
 def test_a_refused_tag_fails_the_run_with_a_hint(
@@ -347,25 +321,39 @@ def test_a_refused_tag_fails_the_run_with_a_hint(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """When gh fails (for instance a tag ruleset), the run fails and points at the rulesets."""
+    """When gh fails, the run fails and names both known causes and what to do."""
     repo, _, _ = history_repo
     monkeypatch.setenv("FAKE_GH_EXIT", "1")
     assert release.run(repo) == 1
     out = capsys.readouterr().out
-    assert "::error::v0.2.0: gh release create v0.2.0 mislukte." in out
+    assert "::error::v0.2.1: gh release create v0.2.1 mislukte." in out
+    assert "Resource not accessible by integration" in out
+    assert "workflowbestanden" in out
     assert "Restrict creations" in out
-    assert len(_gh_calls(fake_gh)) == 2  # the second version is still tried
+    assert len(_gh_calls(fake_gh)) == 1
 
 
 def test_a_version_without_changelog_text_is_not_released(
     history_repo: tuple[Path, str, str], fake_gh: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No release without its CHANGELOG.md section; the other version still goes out."""
+    """No release without its CHANGELOG.md section."""
     repo, _, _ = history_repo
     _commit(repo, "changelog without 0.2.1", {"CHANGELOG.md": CHANGELOG.replace("[0.2.1]", "[x]")})
     assert release.run(repo) == 1
-    assert [call["args"][2] for call in _gh_calls(fake_gh)] == ["v0.2.0"]
+    assert _gh_calls(fake_gh) == []
     assert "::error::v0.2.1: CHANGELOG.md heeft geen sectie voor 0.2.1" in capsys.readouterr().out
+
+
+def test_a_version_without_a_commit_is_not_released(
+    history_repo: tuple[Path, str, str], fake_gh: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A manifest version that no first-parent commit carries cannot be placed: nothing is made."""
+    repo, _, _ = history_repo
+    _git(repo, "checkout", "--quiet", "-b", "loose")
+    (repo / release.MANIFEST).write_text(json.dumps({"version": "0.9.0"}), encoding="utf-8")
+    assert release.run(repo) == 1
+    assert _gh_calls(fake_gh) == []
+    assert "::error::v0.9.0: geen commit op deze branch met versie 0.9.0" in capsys.readouterr().out
 
 
 # --- the script and the workflow --------------------------------------------------------------

@@ -53,7 +53,7 @@
           "calendar_days": "Aantal dagen vooruit waarvoor agenda-items worden opgehaald.",
           "posts_in_list": "Aantal berichten in het lijstattribuut van de berichtensensor.",
           "lezers": "Personen die een bericht gelezen moeten hebben voordat het niet meer nieuw is. Gelezen-markeringen blijven in Home Assistant en gaan nooit naar Social Schools.",
-          "kinderen": "Eén regel per kind, bijvoorbeeld Noud=6A. Scheid meerdere groepen met een komma. Groepsnamen moeten precies overeenkomen; hoofdletters tellen niet."
+          "kinderen": "Kinderen en hun groepen komen uit het Social Schools-account en worden elke dag bijgewerkt. Voeg alleen een regel toe, bijvoorbeeld Noud=6A, om een kind toe te voegen of de groepen van een kind te vervangen. Scheid meerdere groepen met een komma. Groepsnamen moeten precies overeenkomen; hoofdletters tellen niet."
         }
       }
     },
