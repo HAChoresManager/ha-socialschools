@@ -60,6 +60,7 @@ jobs:
           custom_components/socialschools/reading.py
           custom_components/socialschools/children.py
           scripts/probe.py
+          scripts/release.py
       # The probe must also RUN on a bare Python 3.12 with only aiohttp (the documented
       # docker command): --check loads the protocol modules without Home Assistant.
       - run: python3.12 -m pip install --quiet aiohttp
