@@ -648,23 +648,30 @@ def test_parse_posts_page_sorted_newest_first_then_id_desc() -> None:
         pytest.param(
             "2026-11-04T23:00:00Z",
             "2026-11-05T23:00:00Z",
-            date(2026, 11, 5),
+            date(2026, 11, 4),
             date(2026, 11, 6),
-            id="utc-crossing-local-midnight",
+            id="late-utc-times-are-read-as-written",
         ),
         pytest.param(
             "2026-11-03T23:00:00Z",
             "2026-11-04T22:59:59Z",
-            date(2026, 11, 4),
+            date(2026, 11, 3),
             date(2026, 11, 5),
-            id="utc-inclusive-end-crossing-local-midnight",
+            id="inclusive-utc-end-is-read-as-written",
         ),
         pytest.param(
-            "2026-06-10T22:00:00Z",
-            "2026-06-11T22:00:00Z",
+            "2026-06-10T00:00:00Z",
+            "2026-06-11T00:00:00Z",
+            date(2026, 6, 10),
             date(2026, 6, 11),
-            date(2026, 6, 12),
-            id="utc-in-summer-time",
+            id="utc-midnight-in-summer-time",
+        ),
+        pytest.param(
+            "2026-06-10T00:00:00+02:00",
+            "2026-06-11T00:00:00+02:00",
+            date(2026, 6, 10),
+            date(2026, 6, 11),
+            id="cest-midnight",
         ),
         pytest.param(
             "2026-11-04T09:00:00+01:00",
@@ -706,7 +713,7 @@ def test_parse_posts_page_sorted_newest_first_then_id_desc() -> None:
 def test_parse_event_all_day(
     start: str, end: str | None, expected_start: date, expected_end: date
 ) -> None:
-    """All-day events become local dates with an exclusive end after the start."""
+    """All-day events become the dates as written, with an exclusive end after the start."""
     data = event_json(allDay=True, start=start)
     if end is not None:
         data["end"] = end
@@ -717,6 +724,104 @@ def test_parse_event_all_day(
     assert type(event.start) is date
     assert type(event.end) is date
     assert event.end > event.start
+
+
+# The all-day items of the live calendar on 8 November 2026 (``scripts/probe.py --agenda-vorm``):
+# whole days at UTC midnight with ``Z`` and an end that is already exclusive.
+LIVE_ALL_DAY_ITEMS = [
+    ("2026-11-26T00:00:00Z", "2026-11-27T00:00:00Z", date(2026, 11, 26), date(2026, 11, 27)),
+    ("2026-12-03T00:00:00Z", "2026-12-04T00:00:00Z", date(2026, 12, 3), date(2026, 12, 4)),
+    ("2026-12-04T00:00:00Z", "2026-12-05T00:00:00Z", date(2026, 12, 4), date(2026, 12, 5)),
+    ("2026-12-17T00:00:00Z", "2026-12-18T00:00:00Z", date(2026, 12, 17), date(2026, 12, 18)),
+    ("2026-12-18T00:00:00Z", "2026-12-19T00:00:00Z", date(2026, 12, 18), date(2026, 12, 19)),
+    ("2026-12-21T00:00:00Z", "2027-01-04T00:00:00Z", date(2026, 12, 21), date(2027, 1, 4)),
+]
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected_start", "expected_end"),
+    [pytest.param(*item, id=item[0][:10]) for item in LIVE_ALL_DAY_ITEMS],
+)
+def test_parse_event_live_all_day_shapes(
+    start: str, end: str, expected_start: date, expected_end: date
+) -> None:
+    """The live shapes keep their dates: UTC midnight is not first moved to 01:00 local time.
+
+    0.2.0 converted ``2026-11-27T00:00:00Z`` to 01:00 Europe/Amsterdam, saw no midnight and
+    added a day, so every all-day item lasted one day too long.
+    """
+    event = parse_event(event_json(allDay=True, start=start, end=end), tz=TZ)
+    assert (event.start, event.end) == (expected_start, expected_end)
+
+
+def test_study_day_lasts_one_day() -> None:
+    """The study day of 26 November covers that day only: 26 to 27 November, exclusive."""
+    event = parse_event(
+        event_json(allDay=True, start="2026-11-26T00:00:00Z", end="2026-11-27T00:00:00Z"), tz=TZ
+    )
+    assert event.start == date(2026, 11, 26)
+    assert event.end == date(2026, 11, 27)
+    assert event.end - event.start == timedelta(days=1)
+
+
+def test_christmas_holiday_runs_through_sunday_3_january() -> None:
+    """The Christmas holiday from 21 December 2026 ends exclusively on 4 January 2027.
+
+    Its last day is Sunday 3 January; school starts again on Monday 4 January.
+    """
+    event = parse_event(
+        event_json(allDay=True, start="2026-12-21T00:00:00Z", end="2027-01-04T00:00:00Z"), tz=TZ
+    )
+    assert event.start == date(2026, 12, 21)
+    assert event.end == date(2027, 1, 4)
+    last_day = event.end - timedelta(days=1)
+    assert last_day == date(2027, 1, 3)
+    assert last_day.isoweekday() == 7  # Sunday
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        pytest.param("2026-11-26T00:00:00Z", "2026-11-27T00:00:00Z", id="zulu"),
+        pytest.param("2026-11-26T00:00:00", "2026-11-27T00:00:00", id="without-z"),
+        pytest.param("2026-11-26T00:00:00+01:00", "2026-11-27T00:00:00+01:00", id="plus-01-00"),
+        pytest.param("2026-11-26T00:00:00-05:00", "2026-11-27T00:00:00-05:00", id="minus-05-00"),
+        pytest.param("2026-11-26T00:00:00.000Z", "2026-11-27T00:00:00.000Z", id="milliseconds"),
+        pytest.param("2026-11-26T00:00:00Z", None, id="missing-end"),
+        pytest.param("2026-11-26T00:00:00Z", "2026-11-26T00:00:00Z", id="end-equals-start"),
+        pytest.param("2026-11-26T00:00:00+01:00", None, id="plus-01-00-missing-end"),
+        pytest.param("2026-11-26T00:00:00+01:00", "2026-11-26T00:00:00+01:00", id="plus-equal"),
+    ],
+)
+@pytest.mark.parametrize(
+    "zone",
+    [
+        pytest.param(TZ, id="amsterdam"),
+        pytest.param(UTC, id="utc"),
+        pytest.param(ZoneInfo("America/Los_Angeles"), id="los-angeles"),
+    ],
+)
+def test_all_day_variants_give_26_november(start: str, end: str | None, zone: Any) -> None:
+    """``Z``, an offset or none: the date as written is the day; the zone never shifts it."""
+    data = event_json(allDay=True, start=start)
+    if end is not None:
+        data["end"] = end
+    event = parse_event(data, tz=zone)
+    assert (event.start, event.end) == (date(2026, 11, 26), date(2026, 11, 27))
+
+
+def test_live_all_day_items_parse_as_a_list() -> None:
+    """The six live items come out of ``parse_events`` in order with their own dates."""
+    items = [
+        {"id": index, "title": "private-titel", "allDay": True, "start": start, "end": end}
+        for index, (start, end, _, _) in enumerate(LIVE_ALL_DAY_ITEMS, 1)
+    ]
+    events = parse_events({"values": items}, tz=TZ)
+    assert [(event.start, event.end) for event in events] == [
+        (expected_start, expected_end) for _, _, expected_start, expected_end in LIVE_ALL_DAY_ITEMS
+    ]
+    one_day_items = events[:-1]
+    assert all(event.end - event.start == timedelta(days=1) for event in one_day_items)
 
 
 @pytest.mark.parametrize(
@@ -916,7 +1021,10 @@ def test_parse_event_tolerates_optional_fields(
 
 
 def test_parse_event_uses_the_given_timezone() -> None:
-    """``tz`` decides both the assumed zone of naive values and the zone of the result."""
+    """``tz`` decides the assumed zone of naive values and the zone of a timed result.
+
+    All-day dates are read as written: ``tz`` never moves them to another day.
+    """
     naive = parse_event(event_json(start="2026-11-04T09:00:00"), tz=UTC)
     assert naive.start == datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
     assert isinstance(naive.start, datetime)
@@ -925,9 +1033,12 @@ def test_parse_event_uses_the_given_timezone() -> None:
     assert aware.start == datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
     assert isinstance(aware.start, datetime)
     assert aware.start.tzinfo is UTC
-    all_day = parse_event(event_json(start="2026-11-04T23:30:00+01:00", allDay=True), tz=UTC)
-    assert all_day.start == date(2026, 11, 4)
+    all_day = parse_event(event_json(start="2026-11-04T00:00:00+01:00", allDay=True), tz=UTC)
+    assert all_day.start == date(2026, 11, 4)  # converted to UTC it would be 3 November
     assert all_day.end == date(2026, 11, 5)
+    late = parse_event(event_json(start="2026-11-04T23:30:00+01:00", allDay=True), tz=UTC)
+    assert late.start == date(2026, 11, 4)
+    assert late.end == date(2026, 11, 5)
 
 
 @pytest.mark.parametrize(
@@ -967,13 +1078,16 @@ EVENT_ITEMS: list[Any] = [
     {"id": 5, "start": "2026-11-04T00:00:00+01:00", "allDay": True},
     {"id": 4, "start": "2026-11-04T00:00:00+01:00", "allDay": True},
     {"id": 6, "start": "2026-11-04T00:00:00+01:00"},
-    {"id": 7, "start": "2026-11-03T23:00:00Z", "allDay": True},
+    {"id": 7, "start": "2026-11-03T23:00:00Z", "allDay": True},  # the date as written: 3 November
 ]
-EVENT_ORDER = [3, 2, 4, 5, 6, 7, 1]
+EVENT_ORDER = [7, 3, 2, 4, 5, 6, 1]
 
 
 def test_parse_events_sorted_by_start_then_id() -> None:
-    """All-day events sort at local midnight, before the timed events of that day; ties by id."""
+    """All-day events sort at local midnight of their date, before that day's timed events.
+
+    Ties are broken by id.
+    """
     assert [event.id for event in parse_events(EVENT_ITEMS, tz=TZ)] == EVENT_ORDER
 
 

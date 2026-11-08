@@ -197,6 +197,62 @@ async def test_all_day_event_ending_before_midnight(
     ]
 
 
+def _live_all_day_events() -> list[dict[str, Any]]:
+    """Return the study day and the Christmas holiday in the live shape: UTC midnight with ``Z``."""
+    return [
+        make_event(301, "2026-11-26T00:00:00Z", "2026-11-27T00:00:00Z", "Studiedag", all_day=True),
+        make_event(
+            302, "2026-12-21T00:00:00Z", "2027-01-04T00:00:00Z", "Kerstvakantie", all_day=True
+        ),
+    ]
+
+
+async def test_live_all_day_items_keep_their_dates(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_api: AiohttpClientMocker,
+    api_state: ApiState,
+) -> None:
+    """Whole days at UTC midnight keep their dates: no extra day at the end (0.2.0 added one)."""
+    api_state.events = _live_all_day_events()
+    await setup_integration(hass, mock_config_entry)
+    events = await _get_events(hass, "2026-11-01T00:00:00+01:00", "2027-02-01T00:00:00+01:00")
+    assert [(event["summary"], event["start"], event["end"]) for event in events] == [
+        ("Studiedag", "2026-11-26", "2026-11-27"),
+        ("Kerstvakantie", "2026-12-21", "2027-01-04"),
+    ]
+    assert await _get_events(hass, "2026-11-27T00:00:00+01:00", "2026-11-28T00:00:00+01:00") == []
+    sunday = await _get_events(hass, "2027-01-03T00:00:00+01:00", "2027-01-04T00:00:00+01:00")
+    assert [event["summary"] for event in sunday] == ["Kerstvakantie"]
+    assert await _get_events(hass, "2027-01-04T00:00:00+01:00", "2027-01-05T00:00:00+01:00") == []
+
+
+@pytest.mark.parametrize(
+    ("expected_state", "expected_message"),
+    [
+        pytest.param("on", "Studiedag", marks=pytest.mark.freeze_time("2026-11-26T12:00:00+00:00")),
+        pytest.param(
+            "off", "Kerstvakantie", marks=pytest.mark.freeze_time("2026-11-27T00:30:00+00:00")
+        ),
+    ],
+)
+async def test_live_study_day_is_over_at_midnight(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_api: AiohttpClientMocker,
+    api_state: ApiState,
+    expected_state: str,
+    expected_message: str,
+) -> None:
+    """The study day is on during 26 November and over at local midnight, not a day later."""
+    api_state.events = _live_all_day_events()
+    await setup_integration(hass, mock_config_entry)
+    state = _state(hass)
+    assert state.state == expected_state
+    assert state.attributes["message"] == expected_message
+    assert state.attributes["all_day"] is True
+
+
 async def test_untitled_event(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
