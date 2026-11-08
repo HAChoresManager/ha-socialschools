@@ -270,5 +270,135 @@ def test_children_shape_prints_field_names_and_overlap_only(
         "Velden van roles[0].connections[0]: communities (list), displayName (str), id (int)" in out
     )
     assert "Community-id's in connections: ja" in out
-    assert "Overlap met communities[].id van berichten: ja" in out
-    assert "Overlap met communities[].groupId van berichten: nee" in out
+    assert "Overlap van die id's met communities[].id: ja" in out
+    assert "Overlap van die id's met communities[].groupId: nee" in out
+
+
+def _account_with(connections: list[Any]) -> dict[str, Any]:
+    """Return a ``useraccounts/current`` body with one parent role holding ``connections``."""
+    return {
+        "displayName": "private-ouder",
+        "roles": [
+            {
+                "id": 11,
+                "type": 1,
+                "school": {"id": 7, "name": "private-school"},
+                "connections": connections,
+            }
+        ],
+    }
+
+
+def _children_output(
+    probe: Any, capsys: pytest.CaptureFixture[str], connections: list[Any], posts: list[Any]
+) -> str:
+    """Run ``describe_children`` and return what it printed; no value may have leaked."""
+    probe.describe_children(_account_with(connections), posts, 1)
+    out = capsys.readouterr().out
+    assert "private-" not in out
+    for number in ("987001", "987002", "555001", "555002", "424242"):
+        assert number not in out
+    return out
+
+
+CHILD = {
+    "id": 424242,
+    "displayName": "private-kind",
+    "firstName": "private-voornaam",
+    "code": "private-code",
+    "yearClass": "private-6A",
+}
+FEED = [
+    {"communities": [{"id": 555001, "groupId": 987001, "name": "private-6A"}]},
+    {"communities": [{"id": 555002, "groupId": 987002, "name": "private-Schoolnieuws"}]},
+]
+
+
+def test_children_groups_linked_by_group_id(capsys: pytest.CaptureFixture[str]) -> None:
+    """Group objects: their field names and types, and which field links to the feed."""
+    probe = _probe_module()
+    group = {"groupId": 987001, "id": "private-guid", "name": "private-6A"}
+    out = _children_output(probe, capsys, [{**CHILD, "groups": [group]}], FEED)
+    lines = out.splitlines()
+    assert "Groepen per connection: 1" in lines
+    assert (
+        "Vorm van roles[0].connections[0].groups[0]: object; "
+        "velden: groupId (int), id (str), name (str)"
+    ) in lines
+    assert (
+        "groupId uit de feed in de groepen van een kind: ja, bij 1 van 2 berichten "
+        "(via groups[].groupId)"
+    ) in lines
+    assert "id uit de feed in de groepen van een kind: nee" in lines
+    assert (
+        "Groepsnaam van een kind gelijk aan een communitynaam in de feed: "
+        "ja, bij 1 van 2 berichten (via groups[].name)"
+    ) in lines
+    assert "yearClass exact gelijk aan een communitynaam in de feed: ja, bij 1 van 2 berichten" in (
+        lines
+    )
+    assert (
+        "yearClass gelijk zonder verschil in hoofdletters en spaties: ja, bij 1 van 2 berichten"
+    ) in lines
+
+
+def test_children_groups_as_bare_ids(capsys: pytest.CaptureFixture[str]) -> None:
+    """A group list of bare numbers: the type is shown and the link goes through ``groups[]``."""
+    probe = _probe_module()
+    connections = [{**CHILD, "groups": [987001, 987002]}, {**CHILD, "groups": []}]
+    out = _children_output(probe, capsys, connections, FEED)
+    lines = out.splitlines()
+    assert "Groepen per connection: 2, 0" in lines
+    assert "Vorm van roles[0].connections[0].groups[0]: int" in lines
+    assert (
+        "groupId uit de feed in de groepen van een kind: ja, bij 2 van 2 berichten (via groups[])"
+    ) in lines
+    assert "id uit de feed in de groepen van een kind: nee" in lines
+    assert "Groepsnaam van een kind gelijk aan een communitynaam in de feed: nee" in lines
+
+
+def test_children_without_groups_compare_year_class_loosely(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without groups nothing links by group; yearClass differs only in case and spacing."""
+    probe = _probe_module()
+    child = {**CHILD, "yearClass": " private-6a ", "groups": []}
+    sibling = {"id": 424242, "displayName": "private-broer", "groups": None}
+    out = _children_output(probe, capsys, [child, sibling], FEED)
+    lines = out.splitlines()
+    assert "Groepen per connection: 0, 0" in lines
+    assert "Vorm van connections[].groups[0]: geen groepen (lijst leeg of ontbreekt)" in lines
+    assert "groupId uit de feed in de groepen van een kind: nee" in lines
+    assert "yearClass exact gelijk aan een communitynaam in de feed: nee" in lines
+    assert (
+        "yearClass gelijk zonder verschil in hoofdletters en spaties: ja, bij 1 van 2 berichten"
+    ) in lines
+
+
+def test_children_with_a_feed_without_group_ids(capsys: pytest.CaptureFixture[str]) -> None:
+    """Communities without ``groupId`` cannot answer the question: the probe says so."""
+    probe = _probe_module()
+    group = {"groupId": 987001, "name": "private-6A"}
+    feed = [{"communities": [{"id": 555001, "name": "private-Iets"}]}]
+    child = {key: value for key, value in CHILD.items() if key != "yearClass"}
+    out = _children_output(probe, capsys, [{**child, "groups": [group]}], feed)
+    lines = out.splitlines()
+    assert (
+        "groupId uit de feed in de groepen van een kind: onbekend "
+        "(geen communities[].groupId in de feed)"
+    ) in lines
+    assert "id uit de feed in de groepen van een kind: nee" in lines
+    assert "yearClass gelijk aan een communitynaam in de feed: onbekend (geen yearClass)" in lines
+
+
+def test_children_with_an_empty_feed(capsys: pytest.CaptureFixture[str]) -> None:
+    """Without posts there is nothing to compare; the probe still shows the shape of the groups."""
+    probe = _probe_module()
+    group = {"groupId": 987001, "name": "private-6A"}
+    out = _children_output(probe, capsys, [{**CHILD, "groups": [group]}], [])
+    lines = out.splitlines()
+    assert (
+        "Vorm van roles[0].connections[0].groups[0]: object; velden: groupId (int), name (str)"
+        in (lines)
+    )
+    assert "Communitynamen in de feed: geen, dus niets te vergelijken" in lines

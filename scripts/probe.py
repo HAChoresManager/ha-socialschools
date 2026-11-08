@@ -23,7 +23,13 @@ Two opt-in investigations add a section after the normal output:
   (``Z``, an offset or none). No titles, descriptions or locations.
 * ``--kinderen-vorm`` prints the field names of the parent role and of its
   ``connections[]`` (the children) in ``useraccounts/current``, and whether those
-  connections carry community ids that also occur on posts. No names or values.
+  connections carry community ids that also occur on posts.  It then describes the
+  ``groups`` of the children: the type (and for an object the field names and types)
+  of the first group, whether a ``groupId`` (or ``id``) of a feed community occurs in
+  the groups of a child and for how many posts of the feed, whether a group name of a
+  child equals a community name, and whether ``yearClass`` equals a community name
+  (exactly, and ignoring case and spacing).  Only types, key names, yes/no answers and
+  counts: no names of children or groups, no ids.
 """
 
 from __future__ import annotations
@@ -54,6 +60,7 @@ _LONG_WORD_RE = re.compile(r"[A-Za-z0-9_\-]{24,}")
 _TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9:.]+)?(Z|[+-][0-9]{2}:?[0-9]{2})?")
 _TZ_DESIGNATOR_RE = re.compile(r"(Z|[+-][0-9]{2}:?[0-9]{2})$")
 _COMMUNITY_KEY_RE = re.compile(r"communit|group|klas|class", re.IGNORECASE)
+_DIGITS_RE = re.compile(r"[0-9]{1,20}")
 AGENDA_WINDOW = timedelta(days=60)
 MAX_FIELD_DEPTH = 3
 
@@ -210,36 +217,184 @@ def community_ids(value: Any, *, inside: bool = False, path: str = "") -> tuple[
 
 
 def describe_children(account: Mapping[str, Any], posts: list[Any], parent_role: int) -> None:
-    """Print the shape of the parent role and its connections, and community-id overlap."""
+    """Print the shape of the parent role and its connections, and how they relate to the feed."""
     roles = [
         role
-        for role in account.get("roles") or []
+        for role in as_list(account.get("roles"))
         if isinstance(role, Mapping) and role.get("type") == parent_role
     ]
     print(f"Kinderen-vorm: {len(roles)} ouderrol(len)")
     if not roles:
         return
-    counts = [len(role.get("connections") or []) for role in roles]
+    counts = [len(as_list(role.get("connections"))) for role in roles]
     print(f"Aantal connections per ouderrol: {', '.join(str(count) for count in counts)}")
     print_field_tree(roles[0], "roles[0]")
-    connections = [item for role in roles for item in role.get("connections") or []]
+    connections = [item for role in roles for item in as_list(role.get("connections"))]
     ids, paths = community_ids(connections)
     print(f"Community-id's in connections: {ja_nee(bool(ids))}")
     if paths:
         print(f"Gevonden onder: {', '.join(sorted(paths))}")
-    post_ids: set[int] = set()
-    post_group_ids: set[int] = set()
-    for post in posts:
-        for community in (post.get("communities") or []) if isinstance(post, Mapping) else []:
-            if isinstance(community, Mapping):
-                if isinstance(community.get("id"), int):
-                    post_ids.add(community["id"])
-                if isinstance(community.get("groupId"), int):
-                    post_group_ids.add(community["groupId"])
-    if not ids:
+    if ids:
+        post_ids = set().union(*(community_ids_of(post, "id") for post in posts))
+        post_group_ids = set().union(*(community_ids_of(post, "groupId") for post in posts))
+        print(f"Overlap van die id's met communities[].id: {ja_nee(bool(ids & post_ids))}")
+        print(
+            f"Overlap van die id's met communities[].groupId: {ja_nee(bool(ids & post_group_ids))}"
+        )
+    describe_child_groups(connections, roles, posts)
+
+
+def as_list(value: Any) -> list[Any]:
+    """Return ``value`` when it is a list, else an empty list."""
+    return value if isinstance(value, list) else []
+
+
+def id_value(value: Any) -> int | None:
+    """Return an id-like value as int: an int (not a bool) or a short string of digits."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and _DIGITS_RE.fullmatch(value.strip()):
+        return int(value.strip())
+    return None
+
+
+def normalise_name(value: str) -> str:
+    """Return a group name for comparison: whitespace collapsed, case folded (as the option)."""
+    return " ".join(value.split()).casefold()
+
+
+def group_values(connections: list[Any]) -> tuple[dict[str, set[int]], dict[str, set[str]]]:
+    """Collect the ids and the texts in the ``groups`` of the connections, keyed by their place.
+
+    The place is ``groups[]`` for a group given as a bare value and ``groups[].<key>`` for a
+    value under ``key`` of a group object.  Callers print only the places, never the values.
+    """
+    ids: dict[str, set[int]] = {}
+    texts: dict[str, set[str]] = {}
+    for connection in connections:
+        groups = connection.get("groups") if isinstance(connection, Mapping) else None
+        for group in as_list(groups):
+            items = (
+                [(f"groups[].{key}", item) for key, item in group.items()]
+                if isinstance(group, Mapping)
+                else [("groups[]", group)]
+            )
+            for place, item in items:
+                if (number := id_value(item)) is not None:
+                    ids.setdefault(place, set()).add(number)
+                if isinstance(item, str) and item.strip():
+                    texts.setdefault(place, set()).add(item)
+    return ids, texts
+
+
+def community_ids_of(post: Any, key: str) -> set[int]:
+    """Return the id-like ``key`` values of the communities of one feed post."""
+    communities = post.get("communities") if isinstance(post, Mapping) else None
+    return {
+        number
+        for community in as_list(communities)
+        if isinstance(community, Mapping) and (number := id_value(community.get(key))) is not None
+    }
+
+
+def community_names_of(post: Any) -> set[str]:
+    """Return the community names of one feed post."""
+    communities = post.get("communities") if isinstance(post, Mapping) else None
+    return {
+        community["name"]
+        for community in as_list(communities)
+        if isinstance(community, Mapping) and isinstance(community.get("name"), str)
+    }
+
+
+def matching_posts(
+    per_post: list[set[Any]], by_place: Mapping[str, set[Any]]
+) -> tuple[int, list[str]]:
+    """Return how many posts share a value with ``by_place``, and through which places."""
+    places = sorted(
+        place for place, values in by_place.items() if any(values & p for p in per_post)
+    )
+    wanted: set[Any] = set().union(*(by_place[place] for place in places))
+    return sum(1 for values in per_post if values & wanted), places
+
+
+def answer(count: int, total: int, places: list[str] | None = None) -> str:
+    """Return ``nee`` or ``ja, bij N van M berichten`` plus the places; never a value."""
+    if not count:
+        return "nee"
+    via = f" (via {', '.join(places)})" if places else ""
+    return f"ja, bij {count} van {total} berichten{via}"
+
+
+def describe_first_group(roles: list[Any]) -> None:
+    """Print the type, and for an object its field names and types, of the first group of a child."""
+    for role_index, role in enumerate(roles):
+        for connection_index, connection in enumerate(as_list(role.get("connections"))):
+            groups = as_list(connection.get("groups") if isinstance(connection, Mapping) else None)
+            if not groups:
+                continue
+            label = f"roles[{role_index}].connections[{connection_index}].groups[0]"
+            group = groups[0]
+            if isinstance(group, Mapping):
+                fields = ", ".join(
+                    f"{key} ({type_name(item)})" for key, item in sorted(group.items())
+                )
+                print(f"Vorm van {label}: object; velden: {fields or '(leeg)'}")
+            else:
+                print(f"Vorm van {label}: {type_name(group)}")
+            return
+    print("Vorm van connections[].groups[0]: geen groepen (lijst leeg of ontbreekt)")
+
+
+def describe_child_groups(connections: list[Any], roles: list[Any], posts: list[Any]) -> None:
+    """Print how the groups and yearClass of the children relate to the communities of the feed.
+
+    Only types, key names, yes/no answers and counts; never names, group names or ids.
+    """
+    counts = [
+        len(as_list(connection.get("groups"))) if isinstance(connection, Mapping) else 0
+        for connection in connections
+    ]
+    print(f"Groepen per connection: {', '.join(map(str, counts)) or 'geen connections'}")
+    describe_first_group(roles)
+    total = len(posts)
+    ids_by_place, texts_by_place = group_values(connections)
+    for key in ("groupId", "id"):
+        per_post = [community_ids_of(post, key) for post in posts]
+        label = f"{key} uit de feed in de groepen van een kind"
+        if not any(per_post):
+            print(f"{label}: onbekend (geen communities[].{key} in de feed)")
+            continue
+        count, places = matching_posts(per_post, ids_by_place)
+        print(f"{label}: {answer(count, total, places)}")
+    names_per_post = [community_names_of(post) for post in posts]
+    if not any(names_per_post):
+        print("Communitynamen in de feed: geen, dus niets te vergelijken")
         return
-    print(f"Overlap met communities[].id van berichten: {ja_nee(bool(ids & post_ids))}")
-    print(f"Overlap met communities[].groupId van berichten: {ja_nee(bool(ids & post_group_ids))}")
+    count, places = matching_posts(names_per_post, texts_by_place)
+    print(
+        "Groepsnaam van een kind gelijk aan een communitynaam in de feed: "
+        f"{answer(count, total, places)}"
+    )
+    year_classes = {
+        connection["yearClass"]
+        for connection in connections
+        if isinstance(connection, Mapping)
+        and isinstance(connection.get("yearClass"), str)
+        and connection["yearClass"].strip()
+    }
+    if not year_classes:
+        print("yearClass gelijk aan een communitynaam in de feed: onbekend (geen yearClass)")
+        return
+    exact, _ = matching_posts(names_per_post, {"yearClass": year_classes})
+    print(f"yearClass exact gelijk aan een communitynaam in de feed: {answer(exact, total)}")
+    loose, _ = matching_posts(
+        [{normalise_name(name) for name in names} for names in names_per_post],
+        {"yearClass": {normalise_name(value) for value in year_classes}},
+    )
+    print(f"yearClass gelijk zonder verschil in hoofdletters en spaties: {answer(loose, total)}")
 
 
 async def async_compare_detail(api: Any, school_id: int, post: Mapping[str, Any]) -> None:
@@ -377,7 +532,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--kinderen-vorm",
         action="store_true",
-        help="also print the field names of the children (connections) and community-id overlap",
+        help=(
+            "also print the field names of the children (connections), the shape of their "
+            "groups and whether those match the communities of the feed"
+        ),
     )
     return parser.parse_args(argv)
 
